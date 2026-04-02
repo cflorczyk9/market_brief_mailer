@@ -155,6 +155,9 @@ FUTURES_TICKERS = {
     "Dow":     "YM=F",
 }
 
+CONTINUOUS_TICKERS = {"CL=F", "GC=F", "BTC-USD"}  # futures & crypto: trade outside regular hours
+
+
 def fetch_market_data() -> dict:
     """Fetch closing prices + YTD/MTD returns from Yahoo Finance."""
     today = date.today()
@@ -166,9 +169,19 @@ def fetch_market_data() -> dict:
     for key, ticker in TICKERS.items():
         try:
             t = yf.Ticker(ticker)
-            hist = t.history(start=start_date.isoformat(), end=today.isoformat())
+
+            # yfinance `end` is exclusive. Stocks are fine with end=today
+            # (yesterday's close), but futures/crypto trade continuously
+            # and need end=tomorrow to capture the latest data.
+            if ticker in CONTINUOUS_TICKERS:
+                end_date = today + timedelta(days=1)
+            else:
+                end_date = today
+
+            hist = t.history(start=start_date.isoformat(), end=end_date.isoformat())
+            hist = hist.dropna(subset=["Close"])
             if hist.empty:
-                print(f"  Warning: No data for {ticker}", file=sys.stderr)
+                print(f"  Warning: No valid Close data for {ticker}", file=sys.stderr)
                 continue
 
             latest_close = hist["Close"].iloc[-1]
@@ -234,24 +247,46 @@ def fetch_futures() -> str:
 
 # ── Earnings Calendar (Yahoo Finance) ──────────────────────────
 
-# Top ~25 by market cap — the names every advisor knows
+# Top 100 S&P 500 by market cap
 EARNINGS_WATCHLIST = [
-    "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "BRK-B",
-    "JPM", "V", "UNH", "MA", "HD", "XOM", "JNJ", "WMT", "PG", "CVX",
-    "LLY", "BAC", "COST", "NFLX", "ADBE", "CRM", "MCD",
+    # Mega-cap tech
+    "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "BRK-B",
+    # Financials
+    "JPM", "V", "MA", "BAC", "GS", "MS", "BLK", "SCHW", "C", "AXP", "WFC",
+    "USB", "PNC", "CB", "MMC",
+    # Healthcare
+    "UNH", "LLY", "JNJ", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
+    "GILD", "ISRG", "MDT", "AMGN", "CVS", "ELV", "CI",
+    # Consumer
+    "WMT", "PG", "COST", "HD", "MCD", "KO", "PEP", "NKE", "SBUX", "TGT",
+    "LOW", "TJX", "ROST", "DG", "DLTR", "CL", "EL",
+    # Tech / Software / Semis
+    "ADBE", "CRM", "NFLX", "AMD", "INTC", "QCOM", "TXN", "ORCL", "NOW",
+    "AMAT", "MU", "LRCX", "KLAC", "SNPS", "CDNS", "PANW", "CRWD",
+    # Industrials / Defense
+    "CAT", "DE", "HON", "GE", "BA", "RTX", "LMT", "UPS", "FDX",
+    "MMM", "GD", "NOC",
+    # Energy
+    "XOM", "CVX", "COP", "SLB", "EOG",
+    # Comm / Media
+    "DIS", "CMCSA", "TMUS", "VZ",
+    # Other
+    "ACN", "LEN", "ULTA", "DKS", "LULU", "FIS",
 ]
 
 def fetch_earnings_calendar() -> str:
-    """Fetch upcoming earnings for top ~25 companies over the next 7 days."""
+    """Fetch earnings for top 100 S&P 500 companies: today + next 5 trading days."""
     today = date.today()
     window_end = today + timedelta(days=7)
 
     earnings = []
+    skipped = 0
     for ticker in EARNINGS_WATCHLIST:
         try:
             t = yf.Ticker(ticker)
             dates = t.earnings_dates
             if dates is None or dates.empty:
+                skipped += 1
                 continue
             for dt in dates.index:
                 ed = dt.date()
@@ -263,11 +298,15 @@ def fetch_earnings_calendar() -> str:
                         elif dt.hour >= 16:
                             time_str = " (AMC)"
                     earnings.append((ed, ticker, time_str))
+                    break
         except Exception:
+            skipped += 1
             continue
 
+    print(f"  Checked {len(EARNINGS_WATCHLIST)} tickers, skipped {skipped}")
+
     if not earnings:
-        print("  No major earnings found in this window")
+        print("  No top-100 earnings found this week")
         return ""
 
     earnings.sort(key=lambda x: (x[0], x[1]))
@@ -281,8 +320,8 @@ def fetch_earnings_calendar() -> str:
             current_date = ed
         lines.append(f"  {ticker}{time_str}")
 
-    result = "UPCOMING EARNINGS (top companies):" + "".join(lines)
-    print(f"  Found {len(earnings)} earnings in watchlist")
+    result = "EARNINGS THIS WEEK (top S&P 500 companies):" + "".join(lines)
+    print(f"  Found {len(earnings)} earnings this week")
     return result
 
 
@@ -367,7 +406,31 @@ SYSTEM_PROMPT = """You write daily pre-market morning briefings for financial ad
 
 Tone: sharp colleague in the hallway before the first call. Professional, clear, occasionally wry.
 
-BREVITY IS CRITICAL. This email should take 60 seconds to read. Every sentence must earn its place.
+THREE CRITICAL RULES:
+
+1. ZERO REDUNDANCY — THIS IS THE MOST IMPORTANT RULE. Read this carefully.
+This email has four content blocks: greeting hook, bottom line, advisor talking point, and water cooler. Each block must contain ENTIRELY NEW information. Specifically:
+- Never state the same fact twice anywhere in the email. If the bottom line says "Morgan Stanley capped redemptions," the talking point CANNOT mention Morgan Stanley capping redemptions. Not even rephrased.
+- Never repeat a company name, data point, or event across sections. Once you've mentioned it, it's used up. EXCEPTION: Companies appearing in the What to Watch earnings calendar may also be mentioned in the bottom line or talking point if their earnings are relevant to the day's narrative.
+- The talking point must ADD ANALYSIS the bottom line didn't cover. If the bottom line covered what happened, the talking point covers what it means for portfolios or what advisors should do.
+- The water cooler must be a completely unrelated story.
+- Before writing each section, re-read what you've already written and ask: "Am I about to repeat anything?" If yes, find new material.
+
+2. SIMPLE LANGUAGE EVERYWHERE. Every sentence in this email should be understandable by someone in their first year in finance. When you have a choice between an industry term and a simpler way to say it, always pick the simpler version. "Collateral calls on levered credit positions are cascading" should be "Lenders are demanding their money back, and it's spreading." Industry terms are okay when there's no simpler alternative, but default to plain English. Specific rules:
+- Write short, clear sentences. If a sentence needs two commas, split it.
+- Headlines must read like a newspaper, not a trading desk: "The Fed rate cut timeline just got pushed back" not "Duration is pain again."
+- Explain any law, policy, or non-obvious concept in the same sentence.
+- Never say "the 10-year" alone — say "the 10-year Treasury yield."
+- Avoid dense compound phrases like "stagflation risk reverses the rate-cut narrative." Say what's actually happening: "Inflation is rising and the economy is slowing, which makes it harder for the Fed to cut rates."
+- The client script especially must sound like a human talking, not a research note.
+
+3. POLITICAL NEUTRALITY. This newsletter is for financial advisors across the political spectrum. When covering policy (tariffs, regulation, fiscal spending, executive orders, Fed appointments, etc.), present what happened and why it matters for markets/portfolios without editorializing on whether the policy is good or bad. Specific rules:
+- State the policy or action factually. "The White House proposed X" not "The White House's misguided X."
+- Present market implications, not political opinions. "Tariffs on steel would raise input costs for manufacturers" is fine. "The tariff plan misses the real problem" is not.
+- If there are competing views, attribute them: "Supporters say X, while critics argue Y." Don't adopt either side.
+- Never use language like "soundbite solution," "political theater," "common-sense reform," or any phrasing that signals approval or disapproval of a policy.
+- The Water Cooler section is especially prone to this. Keep it observational and wry, not editorial. The italic sentence at the end should connect to advising or markets, not pass judgment on policymakers.
+- When covering trade policy, immigration policy, energy policy, defense spending, or tax changes, always frame through the lens of "what this means for portfolios" rather than "whether this is the right call."
 
 IMPORTANT: Market data, pre-market futures, earnings calendar, AND economic calendar are ALL pre-computed in the user message. Do NOT search for any of these. Use 1 web search ONLY for: overnight news/developments and a US-focused Water Cooler story.
 
@@ -375,7 +438,7 @@ OUTPUT FORMAT — in this EXACT order:
 
 LINE 1 — GREETING HOOK: One sentence, what matters THIS MORNING. <p class="greeting-hook"> tags.
 
-LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings (never write "Overnight:" or "Key drivers:" or "Watch:" — just write sentences). Mention pre-market direction and the one or two things that matter today. <p class="bottom-line"> tags. <b> tags on numbers.
+LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. Use pre-market futures data to mention direction. Highlight the 1-2 most important things happening today. <p class="bottom-line"> tags. <b> tags on numbers.
 
 LINE 3 — SUMMARY JSON (one line):
 {"headline":"~10 words","talking_point":"angle + WHY in ~15 words","client_script_topic":"topic + framing ~10 words","water_cooler":"story + subject ~10 words","key_driver":"underlying reason ~10 words"}
@@ -384,11 +447,11 @@ Then a blank line, then EXACTLY these HTML sections:
 
 <div class="section section-advisor">
 <h2>Advisor Talking Point</h2>
-<h3>[Plain-language framing of the key dynamic]</h3>
-<p>2 short paragraphs. HARD LIMIT: 150-200 words total. No more. Get to the point fast.</p>
+<h3>[Simple, clear headline. Newspaper style, no jargon.]</h3>
+<p>2 short paragraphs. HARD LIMIT: 150-200 words. Must cover a DIFFERENT angle than the bottom line.</p>
 <div class="client-script">
 <p class="client-script-label">If a client asks about [topic]</p>
-<p>2 sentences max. Natural, confident, jargon-light.</p>
+<p>2 sentences max. Sound like a person talking, not a document.</p>
 </div>
 </div>
 
@@ -403,14 +466,14 @@ Then a blank line, then EXACTLY these HTML sections:
 <tr class="watch-group"><td colspan="2">Next Week</td></tr>
 <tr><td class="watch-time">Wed</td><td class="watch-desc">FOMC decision</td></tr>
 </table>
-BE SPECIFIC. Use the pre-computed earnings AND economic calendar from the user message. Combine them into a clean calendar grouped by day. Never say "additional earnings wave" or "macro data returns."
+BE SPECIFIC. Use the pre-computed earnings AND economic calendar from the user message. The earnings data covers today and the rest of the week — include all of it grouped by day. If no earnings data is provided, note "No major S&P 500 earnings this week." Combine with economic releases into a clean calendar.
 IMPORTANT: The calendar table is the ENTIRE section. No prose paragraphs after the table.
 </div>
 
 <div class="section section-watercooler">
 <h2>Water Cooler</h2>
 <h3>[Catchy headline]</h3>
-<p>HARD LIMIT: 50-75 words. One short paragraph. US-focused story an advisor would mention at dinner. End with one italic sentence connecting it to advising.</p>
+<p>HARD LIMIT: 50-75 words. Must be a COMPLETELY DIFFERENT story from the bottom line and talking point. If those sections covered oil, credit, or geopolitics, the water cooler must be about something else entirely (tech, real estate, billionaires, tax policy, etc). US-focused. End with one italic sentence connecting it to advising.</p>
 </div>
 
 Total across ALL sections: 300-400 words. No more. Start with greeting hook. No preamble."""
@@ -574,9 +637,13 @@ def inline_analysis_styles(html: str) -> str:
     html = re.sub(r'<td class="watch-desc">', f'<td style="{S_WATCH_DESC}">', html)
     html = re.sub(r'<h2>', f'<h2 style="{S_H2}">', html)
     html = re.sub(r'<h3>', f'<h3 style="{S_H3}">', html)
-    # Paragraphs — bare <p> tags only
-    html = re.sub(r'<p>(?!<)', f'<p style="{S_P}">', html)
-    html = re.sub(r'<p>\n', f'<p style="{S_P}">\n', html)
+    # Strip <cite> tags from web search (keep inner text)
+    html = re.sub(r'<cite[^>]*>', '', html)
+    html = re.sub(r'</cite>', '', html)
+    # Convert markdown *italic* to <i> tags
+    html = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', html)
+    # Paragraphs — style ALL bare <p> tags (no existing style attribute)
+    html = re.sub(r'<p(?!\s+style)>', f'<p style="{S_P}">', html)
     # Fix paragraphs inside client-script
     def fix_client(match):
         block = match.group(0)
@@ -593,6 +660,22 @@ def inline_analysis_styles(html: str) -> str:
         html = html[:idx] + new + html[idx + len(old):]
     # Clean remaining class attributes
     html = re.sub(r' class="[^"]*"', '', html)
+
+    # Enforce h2 labels — if the model skipped them, insert them
+    advisor_h2 = f'<h2 style="{S_H2}">Advisor Talking Point</h2>'
+    if re.escape(S_ADVISOR) in re.escape(html) and "Advisor Talking Point" not in html:
+        html = html.replace(
+            f'<div style="{S_ADVISOR}">',
+            f'<div style="{S_ADVISOR}">\n{advisor_h2}',
+        )
+
+    watercooler_h2 = f'<h2 style="{S_H2}">Water Cooler</h2>'
+    if S_WATERCOOLER in html and "Water Cooler" not in html:
+        html = html.replace(
+            f'<div style="{S_WATERCOOLER}">',
+            f'<div style="{S_WATERCOOLER}">\n{watercooler_h2}',
+        )
+
     return html
 
 
