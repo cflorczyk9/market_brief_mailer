@@ -3,7 +3,12 @@ name: Daily Market Brief
 on:
   schedule:
     - cron: "0 10 * * 1-5"  # 12:00 UTC = 7am EST (weekdays)
-  workflow_dispatch:         # manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Send only to Connor (test mode)"
+        type: boolean
+        default: true
 
 jobs:
   send-brief:
@@ -26,4 +31,9 @@ jobs:
           UNSUBSCRIBE_BASE_URL: ${{ secrets.UNSUBSCRIBE_BASE_URL }}
           SUBSCRIBE_URL: ${{ secrets.SUBSCRIBE_URL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python generate_and_send.py
+        run: |
+          if [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
+            python generate_and_send.py --test
+          else
+            python generate_and_send.py
+          fi
