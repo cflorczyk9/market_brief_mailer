@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python generate_and_send.py --test)",
+      "Bash(pip install:*)",
+      "Bash(gh api:*)"
+    ]
+  }
+}
