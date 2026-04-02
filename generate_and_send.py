@@ -17,6 +17,7 @@ from datetime import datetime, date, timedelta
 import urllib.request
 import urllib.error
 import urllib.parse
+import yfinance as yf
 
 
 # ── Config ─────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 UNSUBSCRIBE_BASE_URL = os.environ.get(
     "UNSUBSCRIBE_BASE_URL", "https://brieflywealth.com/unsubscribe.html"
 )
@@ -103,7 +105,7 @@ def get_recent_summaries(n: int = 10) -> str | None:
 
 
 def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str):
-    """Save today's brief and summary to Supabase."""
+    """Save today's brief and summary to Supabase (upsert on brief_date)."""
     try:
         d = datetime.strptime(brief_date, "%B %d, %Y")
         iso_date = d.strftime("%Y-%m-%d")
@@ -116,7 +118,8 @@ def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str)
         "analysis": analysis,
         "summary": summary,
     }).encode()
-    url = f"{SUPABASE_URL}/rest/v1/briefs"
+    # Use on_conflict to upsert when running multiple times on the same day
+    url = f"{SUPABASE_URL}/rest/v1/briefs?on_conflict=brief_date"
     req = urllib.request.Request(url, data=payload, method="POST", headers={
         "apikey": SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -125,9 +128,237 @@ def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str)
     })
     try:
         with urllib.request.urlopen(req) as resp:
-            print(f"Brief saved for {iso_date}")
+            status = resp.getcode()
+            print(f"Brief saved for {iso_date} (HTTP {status})")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        print(f"Warning: Could not save brief (HTTP {e.code}): {body}", file=sys.stderr)
     except Exception as e:
         print(f"Warning: Could not save brief: {e}", file=sys.stderr)
+
+
+# ── Market Data (Yahoo Finance) ────────────────────────────────
+
+TICKERS = {
+    "sp500":    "^GSPC",
+    "nasdaq":   "^IXIC",
+    "dow":      "^DJI",
+    "yield10y": "^TNX",
+    "wti":      "CL=F",
+    "gold":     "GC=F",
+    "btc":      "BTC-USD",
+}
+
+FUTURES_TICKERS = {
+    "S&P 500": "ES=F",
+    "Nasdaq":  "NQ=F",
+    "Dow":     "YM=F",
+}
+
+def fetch_market_data() -> dict:
+    """Fetch closing prices + YTD/MTD returns from Yahoo Finance."""
+    today = date.today()
+    year_start = date(today.year, 1, 1)
+    month_start = date(today.year, today.month, 1)
+    start_date = year_start - timedelta(days=10)
+
+    result = {}
+    for key, ticker in TICKERS.items():
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(start=start_date.isoformat(), end=today.isoformat())
+            if hist.empty:
+                print(f"  Warning: No data for {ticker}", file=sys.stderr)
+                continue
+
+            latest_close = hist["Close"].iloc[-1]
+            is_yield = key == "yield10y"
+
+            ytd_ref = hist.loc[hist.index >= str(year_start)]
+            ytd_base = ytd_ref["Close"].iloc[0] if not ytd_ref.empty else hist["Close"].iloc[0]
+
+            mtd_ref = hist.loc[hist.index >= str(month_start)]
+            mtd_base = mtd_ref["Close"].iloc[0] if not mtd_ref.empty else hist["Close"].iloc[-1]
+
+            if is_yield:
+                level = f"{latest_close:.2f}%"
+                ytd_bp = round((latest_close - ytd_base) * 100)
+                mtd_bp = round((latest_close - mtd_base) * 100)
+                ytd_str = f"+{ytd_bp}bp" if ytd_bp >= 0 else f"{ytd_bp}bp"
+                mtd_str = f"+{mtd_bp}bp" if mtd_bp >= 0 else f"{mtd_bp}bp"
+            elif key in ("wti", "gold", "btc"):
+                level = f"${latest_close:,.2f}" if key != "btc" else f"${latest_close:,.0f}"
+                ytd_pct = ((latest_close / ytd_base) - 1) * 100
+                mtd_pct = ((latest_close / mtd_base) - 1) * 100
+                ytd_str = f"+{ytd_pct:.1f}%" if ytd_pct >= 0 else f"{ytd_pct:.1f}%"
+                mtd_str = f"+{mtd_pct:.1f}%" if mtd_pct >= 0 else f"{mtd_pct:.1f}%"
+            else:
+                level = f"{latest_close:,.2f}"
+                ytd_pct = ((latest_close / ytd_base) - 1) * 100
+                mtd_pct = ((latest_close / mtd_base) - 1) * 100
+                ytd_str = f"+{ytd_pct:.1f}%" if ytd_pct >= 0 else f"{ytd_pct:.1f}%"
+                mtd_str = f"+{mtd_pct:.1f}%" if mtd_pct >= 0 else f"{mtd_pct:.1f}%"
+
+            result[key] = {"level": level, "ytd": ytd_str, "mtd": mtd_str}
+            print(f"  {key}: {level}  YTD {ytd_str}  MTD {mtd_str}")
+
+        except Exception as e:
+            print(f"  Warning: Failed to fetch {ticker}: {e}", file=sys.stderr)
+
+    return result
+
+
+def fetch_futures() -> str:
+    """Fetch pre-market futures from Yahoo Finance. Returns compact text for the AI."""
+    lines = []
+    for name, ticker in FUTURES_TICKERS.items():
+        try:
+            t = yf.Ticker(ticker)
+            data = t.history(period="2d")
+            if data.empty or len(data) < 2:
+                continue
+            prev_close = data["Close"].iloc[-2]
+            current = data["Close"].iloc[-1]
+            change_pct = ((current / prev_close) - 1) * 100
+            sign = "+" if change_pct >= 0 else ""
+            lines.append(f"{name} futures: {sign}{change_pct:.2f}%")
+        except Exception:
+            continue
+
+    if not lines:
+        return ""
+    result = "PRE-MARKET FUTURES: " + " | ".join(lines)
+    print(f"  {result}")
+    return result
+
+
+# ── Earnings Calendar (Yahoo Finance) ──────────────────────────
+
+# Top ~25 by market cap — the names every advisor knows
+EARNINGS_WATCHLIST = [
+    "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "BRK-B",
+    "JPM", "V", "UNH", "MA", "HD", "XOM", "JNJ", "WMT", "PG", "CVX",
+    "LLY", "BAC", "COST", "NFLX", "ADBE", "CRM", "MCD",
+]
+
+def fetch_earnings_calendar() -> str:
+    """Fetch upcoming earnings for top ~25 companies over the next 7 days."""
+    today = date.today()
+    window_end = today + timedelta(days=7)
+
+    earnings = []
+    for ticker in EARNINGS_WATCHLIST:
+        try:
+            t = yf.Ticker(ticker)
+            dates = t.earnings_dates
+            if dates is None or dates.empty:
+                continue
+            for dt in dates.index:
+                ed = dt.date()
+                if today <= ed <= window_end:
+                    time_str = ""
+                    if hasattr(dt, 'hour'):
+                        if dt.hour < 10:
+                            time_str = " (BMO)"
+                        elif dt.hour >= 16:
+                            time_str = " (AMC)"
+                    earnings.append((ed, ticker, time_str))
+        except Exception:
+            continue
+
+    if not earnings:
+        print("  No major earnings found in this window")
+        return ""
+
+    earnings.sort(key=lambda x: (x[0], x[1]))
+
+    lines = []
+    current_date = None
+    for ed, ticker, time_str in earnings:
+        if ed != current_date:
+            day_label = "Today" if ed == today else ed.strftime("%A %b %d")
+            lines.append(f"\n{day_label}:")
+            current_date = ed
+        lines.append(f"  {ticker}{time_str}")
+
+    result = "UPCOMING EARNINGS (top companies):" + "".join(lines)
+    print(f"  Found {len(earnings)} earnings in watchlist")
+    return result
+
+
+# ── Economic Calendar (FRED API) ──────────────────────────────
+
+# Release IDs for the data advisors actually care about
+FRED_RELEASES = {
+    10: "CPI",
+    46: "PPI",
+    53: "GDP",
+    21: "Personal Income & Outlays (incl. PCE)",
+    50: "Employment Situation (Jobs Report)",
+    180: "Unemployment Claims",
+    19: "Retail Sales",
+    13: "Industrial Production",
+    86: "Consumer Confidence (Mich.)",
+    22: "Existing Home Sales",
+    166: "New Home Sales",
+    31: "New Residential Construction (Housing Starts)",
+    39: "FOMC Press Release",
+    11: "Employment Cost Index",
+    57: "JOLTs",
+    14: "Consumer Credit",
+    56: "ISM Manufacturing (PMI)",
+}
+
+def fetch_fred_calendar() -> str:
+    """Fetch upcoming economic releases from FRED API for the next 7 days."""
+    if not FRED_API_KEY:
+        print("  No FRED_API_KEY set, skipping economic calendar")
+        return ""
+
+    today = date.today()
+    window_end = today + timedelta(days=7)
+
+    releases = []
+    for release_id, name in FRED_RELEASES.items():
+        try:
+            url = (
+                f"https://api.stlouisfed.org/fred/release/dates"
+                f"?release_id={release_id}"
+                f"&api_key={FRED_API_KEY}"
+                f"&file_type=json"
+                f"&include_release_dates_with_no_data=true"
+                f"&sort_order=asc"
+            )
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+
+            for rd in data.get("release_dates", []):
+                rd_date = date.fromisoformat(rd["date"])
+                if today <= rd_date <= window_end:
+                    releases.append((rd_date, name))
+                    break  # only next occurrence
+        except Exception:
+            continue
+
+    if not releases:
+        print("  No FRED releases found in this window")
+        return ""
+
+    releases.sort(key=lambda x: x[0])
+
+    lines = []
+    current_date = None
+    for rd_date, name in releases:
+        if rd_date != current_date:
+            day_label = "Today" if rd_date == today else rd_date.strftime("%A %b %d")
+            lines.append(f"\n{day_label}:")
+            current_date = rd_date
+        lines.append(f"  {name}")
+
+    result = "ECONOMIC CALENDAR (upcoming releases):" + "".join(lines)
+    print(f"  Found {len(releases)} releases in this window")
+    return result
 
 
 # ── Prompt ─────────────────────────────────────────────────────
@@ -136,21 +367,17 @@ SYSTEM_PROMPT = """You write daily pre-market morning briefings for financial ad
 
 Tone: sharp colleague in the hallway before the first call. Professional, clear, occasionally wry.
 
-BREVITY IS CRITICAL. This email should take 60 seconds to read. Every sentence must earn its place. If you're writing more than the word counts below, you're writing too much.
+BREVITY IS CRITICAL. This email should take 60 seconds to read. Every sentence must earn its place.
 
-Use MINIMAL web searches — 2-3 searches max. Combine queries (e.g. "S&P 500 Nasdaq Dow closing prices YTD MTD March 12 2026"). Do not search for every data point individually.
+IMPORTANT: Market data, pre-market futures, earnings calendar, AND economic calendar are ALL pre-computed in the user message. Do NOT search for any of these. Use 1 web search ONLY for: overnight news/developments and a US-focused Water Cooler story.
 
 OUTPUT FORMAT — in this EXACT order:
 
-LINE 1 — MARKET DATA JSON (one line):
-{"sp500":"6775.80|+2.8%|-1.2%","nasdaq":"22716.14|+1.4%|-2.1%","dow":"47417.27|+3.1%|-0.8%","yield10y":"4.20%|+42bp|+9bp","wti":"$87.25|+31.2%|+14.8%","gold":"$2948|+11.4%|+3.2%"}
-Format: "level|ytd|mtd" for each key.
+LINE 1 — GREETING HOOK: One sentence, what matters THIS MORNING. <p class="greeting-hook"> tags.
 
-LINE 2 — GREETING HOOK: One sentence, what matters THIS MORNING. <p class="greeting-hook"> tags.
+LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings (never write "Overnight:" or "Key drivers:" or "Watch:" — just write sentences). Mention pre-market direction and the one or two things that matter today. <p class="bottom-line"> tags. <b> tags on numbers.
 
-LINE 3 — BOTTOM LINE: 2-3 sentences MAXIMUM. Pre-market direction, the "so what," one or two things to watch today. <p class="bottom-line"> tags. <b> tags on numbers.
-
-LINE 4 — SUMMARY JSON (one line):
+LINE 3 — SUMMARY JSON (one line):
 {"headline":"~10 words","talking_point":"angle + WHY in ~15 words","client_script_topic":"topic + framing ~10 words","water_cooler":"story + subject ~10 words","key_driver":"underlying reason ~10 words"}
 
 Then a blank line, then EXACTLY these HTML sections:
@@ -169,13 +396,15 @@ Then a blank line, then EXACTLY these HTML sections:
 <h2>What to Watch</h2>
 <table class="watch-calendar">
 <tr class="watch-group"><td colspan="2">Today</td></tr>
-<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Data release</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Specific data release name</td></tr>
+<tr><td class="watch-time">Earnings</td><td class="watch-desc">Company Name (TICK), Company Name (TICK)</td></tr>
 <tr class="watch-group"><td colspan="2">Tomorrow</td></tr>
-<tr><td class="watch-time">Earnings</td><td class="watch-desc">Company (TICK)</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Specific data release</td></tr>
 <tr class="watch-group"><td colspan="2">Next Week</td></tr>
 <tr><td class="watch-time">Wed</td><td class="watch-desc">FOMC decision</td></tr>
 </table>
-IMPORTANT: The calendar table is the ENTIRE section. Do NOT write any prose paragraphs after the table. Just the table, nothing else.
+BE SPECIFIC. Use the pre-computed earnings AND economic calendar from the user message. Combine them into a clean calendar grouped by day. Never say "additional earnings wave" or "macro data returns."
+IMPORTANT: The calendar table is the ENTIRE section. No prose paragraphs after the table.
 </div>
 
 <div class="section section-watercooler">
@@ -184,49 +413,30 @@ IMPORTANT: The calendar table is the ENTIRE section. Do NOT write any prose para
 <p>HARD LIMIT: 50-75 words. One short paragraph. US-focused story an advisor would mention at dinner. End with one italic sentence connecting it to advising.</p>
 </div>
 
-Total across ALL sections: 300-400 words. No more. Start with market data JSON. No preamble."""
+Total across ALL sections: 300-400 words. No more. Start with greeting hook. No preamble."""
 
 
 # ── Parse Response ─────────────────────────────────────────────
 
-def parse_response(raw: str) -> tuple[dict, str, str, str, str]:
-    """Parse into: market_data, greeting_hook, bottom_line, summary_json, analysis HTML."""
+def parse_response(raw: str) -> tuple[str, str, str, str]:
+    """Parse AI output into: greeting_hook, bottom_line, summary_json, analysis HTML.
+    Market data comes from Yahoo Finance, not the AI."""
 
-    # 1. Market data JSON
-    market_data = {}
-    md_match = re.search(r'\{["\']sp500["\'].*"gold"[^}]*\}', raw, re.DOTALL)
-    if not md_match:
-        md_match = re.search(r'\{["\']sp500["\'].*?\}', raw)
-    if md_match:
-        try:
-            raw_json = md_match.group().replace('\n', '')
-            j = json.loads(raw_json)
-            for key in ["sp500", "nasdaq", "dow", "yield10y", "wti", "gold"]:
-                if key in j:
-                    parts = j[key].split("|")
-                    if len(parts) == 3:
-                        market_data[key] = {"level": parts[0], "ytd": parts[1], "mtd": parts[2]}
-                    elif len(parts) == 2:
-                        market_data[key] = {"level": parts[0], "ytd": parts[1], "mtd": "—"}
-            print(f"Market data parsed: {len(market_data)}/6 keys")
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"Warning: Could not parse market data: {e}", file=sys.stderr)
-
-    # 2. Greeting hook
+    # 1. Greeting hook
     greeting_hook = ""
     hook_match = re.search(r'<p class="greeting-hook">(.*?)</p>', raw, re.DOTALL)
     if hook_match:
         greeting_hook = hook_match.group(1).strip()
         print(f"Greeting hook: {greeting_hook[:80]}...")
 
-    # 3. Bottom line
+    # 2. Bottom line
     bottom_line = ""
     bl_match = re.search(r'<p class="bottom-line">(.*?)</p>', raw, re.DOTALL)
     if bl_match:
         bottom_line = bl_match.group(1).strip()
         print(f"Bottom line: {bottom_line[:80]}...")
 
-    # 4. Summary JSON
+    # 3. Summary JSON
     summary_json = ""
     sum_match = re.search(r'\{["\']headline["\'].*?\}', raw, re.DOTALL)
     if sum_match:
@@ -238,7 +448,7 @@ def parse_response(raw: str) -> tuple[dict, str, str, str, str]:
         except json.JSONDecodeError:
             print("Warning: Could not parse summary JSON", file=sys.stderr)
 
-    # 5. Analysis HTML (sections)
+    # 4. Analysis HTML (sections)
     first_div = raw.find('<div class="section')
     if first_div >= 0:
         analysis = raw[first_div:]
@@ -256,7 +466,7 @@ def parse_response(raw: str) -> tuple[dict, str, str, str, str]:
     else:
         analysis = raw
 
-    return market_data, greeting_hook, bottom_line, summary_json, analysis.strip()
+    return greeting_hook, bottom_line, summary_json, analysis.strip()
 
 
 # ── Build Market Card ──────────────────────────────────────────
@@ -316,7 +526,8 @@ def build_market_card(data: dict, bottom_line: str) -> str:
 {row("Dow Jones", "dow")}
 {row("10Y Yield", "yield10y")}
 {row("WTI Crude", "wti")}
-{row("Gold", "gold", last=True)}
+{row("Gold", "gold")}
+{row("Bitcoin", "btc", last=True)}
 </table>
 </div>'''
 
@@ -465,18 +676,36 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 
 # ── Generate Brief ─────────────────────────────────────────────
 
-def generate_brief(recap_day: str, date_str: str,
+def generate_brief(date_str: str, market_data: dict,
+                   futures_text: str = "", earnings_text: str = "",
+                   econ_text: str = "",
                    recent_summaries: str | None = None) -> tuple[str, str, str, str]:
     """Returns: (market_card_html, greeting_hook, analysis_html, summary_json)"""
     user_msg = (
         f"Today is {date_str}. Write this morning's briefing. "
-        f"Do 2-3 searches MAX. Suggested queries: "
-        f"(1) '{recap_day} stock market closing prices S&P Nasdaq Dow YTD MTD {date_str}' "
-        f"(2) 'US pre-market futures oil gold 10-year yield today {date_str}' "
-        f"(3) 'economic calendar earnings today {date_str} US business news'. "
-        f"Extract all data you need from those results. Do not search for each number individually."
+        f"ALL data is pre-computed below. Do NOT search for market data, futures, earnings, or economic releases. "
+        f"Do ONE search for: overnight news/developments and a US-focused Water Cooler story."
     )
+    if futures_text:
+        user_msg += f"\n\n{futures_text}"
+    if earnings_text:
+        user_msg += f"\n\n{earnings_text}"
+    if econ_text:
+        user_msg += f"\n\n{econ_text}"
     if recent_summaries:
+        # Build a short context summary from recent key_drivers
+        drivers = []
+        for line in recent_summaries.split("\n"):
+            if "key_driver" in line:
+                try:
+                    j = json.loads(line.split("] ", 1)[1])
+                    drivers.append(j.get("key_driver", ""))
+                except (json.JSONDecodeError, IndexError):
+                    pass
+        if drivers:
+            recent_drivers = ", ".join(dict.fromkeys(drivers))  # unique, ordered
+            user_msg += f"\n\nCONTEXT: Recent days have been driven by: {recent_drivers}"
+
         user_msg += (
             f"\n\nRecent briefings (avoid repeating these angles):\n"
             f"---\n{recent_summaries}\n---\n"
@@ -515,7 +744,7 @@ def generate_brief(recap_day: str, date_str: str,
         print(f"  Block {i}: {len(block)} chars")
 
     raw = "\n".join(text_blocks)
-    market_data, greeting_hook, bottom_line, summary_json, analysis = parse_response(raw)
+    greeting_hook, bottom_line, summary_json, analysis = parse_response(raw)
     market_card = build_market_card(market_data, bottom_line)
     return market_card, greeting_hook, analysis, summary_json
 
@@ -554,11 +783,32 @@ def main():
         return
     print(f"{len(subs)} active subscriber(s)\n")
 
-    lookback = today - timedelta(days=1)
-    while is_us_market_holiday(lookback.date()):
-        lookback -= timedelta(days=1)
-    recap_day = lookback.strftime("%A")
-    print(f"Previous session: {recap_day}\n")
+    print("Fetching market data from Yahoo Finance...")
+    market_data = fetch_market_data()
+    if not market_data:
+        print("Warning: Could not fetch market data. Proceeding with empty card.", file=sys.stderr)
+    print(f"{len(market_data)}/7 tickers fetched\n")
+
+    print("Fetching pre-market futures...")
+    futures_text = fetch_futures()
+    if not futures_text:
+        print("No futures data available\n")
+    else:
+        print(f"Futures: {futures_text}\n")
+
+    print("Fetching earnings calendar...")
+    earnings_text = fetch_earnings_calendar()
+    if not earnings_text:
+        print("No upcoming earnings found in watchlist\n")
+    else:
+        print(f"Earnings data: {len(earnings_text)} chars\n")
+
+    print("Fetching economic calendar from FRED...")
+    econ_text = fetch_fred_calendar()
+    if not econ_text:
+        print("No FRED releases found in this window\n")
+    else:
+        print(f"Economic calendar: {len(econ_text)} chars\n")
 
     print("Fetching recent summaries...")
     recent_summaries = get_recent_summaries(10)
@@ -567,7 +817,7 @@ def main():
 
     print("Generating brief...")
     market_card, greeting_hook, analysis, summary_json = generate_brief(
-        recap_day, date_str, recent_summaries
+        date_str, market_data, futures_text, earnings_text, econ_text, recent_summaries
     )
     print(f"Market card: {len(market_card)} chars")
     print(f"Greeting hook: {len(greeting_hook)} chars")
