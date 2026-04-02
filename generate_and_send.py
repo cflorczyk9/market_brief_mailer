@@ -426,7 +426,7 @@ IMPORTANT: Market data, pre-market futures, earnings calendar, AND economic cale
 
 OUTPUT FORMAT — in this EXACT order:
 
-LINE 1 — GREETING HOOK: One sentence, what matters THIS MORNING. <p class="greeting-hook"> tags.
+LINE 1 — GREETING HOOK: One sentence, what matters THIS MORNING. Prioritize variety across days — if an ongoing story dominated recent greetings, find a different market-moving angle (earnings, data releases, sector rotations, credit, housing, etc.) and fold the ongoing story into the bottom line instead. <p class="greeting-hook"> tags.
 
 LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. Use pre-market futures data to mention direction. Highlight the 1-2 most important things happening today. <p class="bottom-line"> tags. <b> tags on numbers.
 
@@ -446,7 +446,7 @@ Then a blank line, then EXACTLY this HTML section:
 </div>
 
 SECTION DIVERSITY RULES (critical):
-1. The greeting + bottom line cover today's biggest story. That's fine even if it's the same topic as yesterday.
+1. The greeting + bottom line usually cover today's biggest story. However, if the anti-repetition context includes a GREETING LEAD ROTATION warning, you MUST avoid that theme entirely — not just in the greeting, but in the bottom line and talking point too. The entire editorial brief should feel fresh. Only the What to Watch calendar is exempt.
 2. The Advisor Talking Point MUST cover a DIFFERENT THEME/SECTOR than the greeting and bottom line. If the top story is energy, the talking point should be about earnings, credit, housing, consumer data, labor, tech, or anything else. Find a fresh angle from the earnings calendar, economic data, or a different market sector.
 3. Never state the same fact, company name, data point, or event in both the bottom line and the talking point.
 4. The primary_theme and talking_point_theme fields in the summary JSON MUST be different from each other.
@@ -853,9 +853,9 @@ def generate_brief(date_str: str, market_data: dict,
         # Extract structured theme data from recent briefs
         themes = []          # (date, primary_theme)
         tp_themes = []       # (date, talking_point_theme)
-        tp_angles = []       # talking_point strings
         cs_topics = []       # client_script_topic strings
         drivers = []
+        greeting_headlines = []  # (date, headline, primary_theme)
         for line in recent_summaries.split("\n"):
             try:
                 date_part, json_part = line.split("] ", 1)
@@ -865,18 +865,17 @@ def generate_brief(date_str: str, market_data: dict,
                     themes.append((brief_date, j["primary_theme"]))
                 if j.get("talking_point_theme"):
                     tp_themes.append((brief_date, j["talking_point_theme"]))
-                if j.get("talking_point"):
-                    tp_angles.append(j["talking_point"])
                 if j.get("client_script_topic"):
                     cs_topics.append(j["client_script_topic"])
                 if j.get("key_driver"):
                     drivers.append(j["key_driver"])
+                if j.get("headline"):
+                    greeting_headlines.append((brief_date, j["headline"], j.get("primary_theme", "")))
             except (json.JSONDecodeError, IndexError, ValueError):
                 pass
 
         # Count how often each theme has been the primary theme recently
         primary_counts = Counter(t[1] for t in themes)
-        tp_counts = Counter(t[1] for t in tp_themes)
 
         # Build the context the model sees
         if drivers:
@@ -891,6 +890,76 @@ def generate_brief(date_str: str, market_data: dict,
                 f"{', '.join(overused)}. "
                 f"Your Advisor Talking Point MUST NOT cover any of these themes. "
                 f"Choose from: earnings, credit, housing, labor, consumer, tech, trade/tariffs, rates/fed, or other under-covered sectors."
+                f" Additionally, strongly avoid leading the greeting with these "
+                f"saturated themes unless a discrete new event demands it."
+            )
+
+        # Detect dominant greeting theme in recent window
+        # Group related themes so e.g. "energy" and "geopolitics" covering
+        # the same oil/conflict story count together
+        _THEME_GROUPS = {
+            "energy": "energy/geopolitics", "geopolitics": "energy/geopolitics",
+            "rates/fed": "macro", "consumer": "macro", "labor": "macro",
+        }
+        def _group(t): return _THEME_GROUPS.get(t, t)
+
+        # Consecutive-day detector
+        consecutive_same = None
+        if len(themes) >= 2:
+            yesterday_group = _group(themes[-1][1])
+            day_before_group = _group(themes[-2][1])
+            if yesterday_group == day_before_group:
+                consecutive_same = yesterday_group
+
+        # Dominant theme detector (window: last 4 briefs)
+        dominant_label = None
+        dominant_count = 0
+        recent_window = 4
+        if len(themes) >= 2:
+            recent_groups = [_group(t) for _, t in themes[-recent_window:]]
+            group_counts = Counter(recent_groups)
+            dominant_label, dominant_count = group_counts.most_common(1)[0]
+
+        rotation_triggered = False
+
+        # Tier 1 — Hard rotation: 3+ of last 4, or 2+ with consecutive days
+        if dominant_count >= 3 or (dominant_count >= 2 and consecutive_same):
+            rotation_triggered = True
+            print(f"    ⚠ HARD greeting rotation: '{dominant_label}' led {dominant_count}/last {min(len(themes), recent_window)} briefs (consecutive={bool(consecutive_same)})")
+            anti_rep += (
+                f"\n\nGREETING LEAD ROTATION — MANDATORY: The greeting has led with "
+                f"'{dominant_label}' for {dominant_count} of the last "
+                f"{min(len(themes), recent_window)} days. Today's brief must be ENTIRELY "
+                f"about a different theme. Do NOT mention {dominant_label} anywhere in the "
+                f"greeting hook, bottom line, or advisor talking point — not as the lead, "
+                f"not as context, not as a modifier, not at all. The entire editorial "
+                f"brief must read as if {dominant_label} does not exist today. "
+                f"Choose from earnings, economic data, a sector move, credit markets, "
+                f"housing, labor, consumer data, tech, or any angle that has NOT appeared "
+                f"in recent briefs. Only the What to Watch calendar is exempt."
+            )
+
+        # Tier 2 — Soft rotation: 2 of last 4 (not consecutive)
+        elif dominant_count >= 2 and dominant_label:
+            rotation_triggered = True
+            print(f"    ⚡ Soft greeting rotation: '{dominant_label}' led {dominant_count}/last {min(len(themes), recent_window)} briefs")
+            anti_rep += (
+                f"\n\nGREETING DIVERSITY NOTICE: '{dominant_label}' has led "
+                f"{dominant_count} of the last {min(len(themes), recent_window)} greetings. "
+                f"Strongly prefer avoiding {dominant_label} entirely today — not just in "
+                f"the greeting, but in the bottom line and talking point too. Write the "
+                f"brief as if {dominant_label} is not a story today. Only mention "
+                f"{dominant_label} if there is a MAJOR, discrete event (e.g., "
+                f"a country declares war, a central bank makes an emergency rate decision, "
+                f"a Fortune 50 company collapses) — not a continuation or incremental "
+                f"update of an ongoing story."
+            )
+
+        if greeting_headlines:
+            recent_greetings = [f"{d}: [{t}] {h}" for d, h, t in greeting_headlines[-5:]]
+            anti_rep += (
+                f"\n\nRECENT GREETING HEADLINES (avoid repeating the same angle):\n"
+                + "\n".join(f"- {x}" for x in recent_greetings)
             )
 
         # Recent talking point themes (so the model avoids repeating those too)
@@ -908,11 +977,26 @@ def generate_brief(date_str: str, market_data: dict,
                 + "\n".join(f"- {x}" for x in cs_topics[-5:])
             )
 
-        anti_rep += (
-            f"\n\nThe greeting and bottom line SHOULD cover today's biggest story even if it's ongoing. "
-            f"The Advisor Talking Point MUST cover a DIFFERENT THEME than the greeting/bottom line AND different from the last 2 talking point themes above. "
-            f"The client script MUST NOT reuse any topic from the list above."
-        )
+        if rotation_triggered:
+            anti_rep += (
+                f"\n\nReminder: do NOT mention {dominant_label} anywhere in the brief — "
+                f"not in the greeting hook, not in the bottom line, not in the talking point, "
+                f"not even as a passing reference. The entire editorial brief must be fresh. "
+                f"The Advisor Talking Point MUST also be a different theme from the last 2 "
+                f"talking point themes above. "
+                f"The client script MUST NOT reuse any topic from the list above."
+            )
+        else:
+            anti_rep += (
+                f"\n\nThe greeting and bottom line should cover today's most notable story. "
+                f"Prefer a FRESH angle or theme when possible — variety keeps readers engaged. "
+                f"If the biggest story is the same theme as yesterday's greeting, consider "
+                f"whether there is a genuinely different angle worth leading with instead, "
+                f"and weave the ongoing story into the bottom line. "
+                f"The Advisor Talking Point MUST cover a DIFFERENT THEME than the "
+                f"greeting/bottom line AND different from the last 2 talking point themes above. "
+                f"The client script MUST NOT reuse any topic from the list above."
+            )
 
     # ── CALL 1: Greeting + Bottom Line + Advisor + What to Watch (Haiku, web search) ──
     print("\n  [1/2] Generating main brief + What to Watch (Haiku)...")
