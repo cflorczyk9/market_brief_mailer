@@ -24,5 +24,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           UNSUBSCRIBE_BASE_URL: ${{ secrets.UNSUBSCRIBE_BASE_URL }}
+          SUBSCRIBE_URL: ${{ secrets.SUBSCRIBE_URL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python generate_and_send.py

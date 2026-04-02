@@ -32,7 +32,7 @@ UNSUBSCRIBE_BASE_URL = os.environ.get(
     "UNSUBSCRIBE_BASE_URL", "https://brieflywealth.com/unsubscribe.html"
 )
 SUBSCRIBE_URL = os.environ.get(
-    "SUBSCRIBE_URL", "https://brieflywealth-newsletter.netlify.app/subscribe"
+    "SUBSCRIBE_URL", "https://brieflywealth.com/#newsletter"
 )
 
 MODEL = "claude-haiku-4-5-20251001"
