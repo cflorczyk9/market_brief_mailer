@@ -2,7 +2,7 @@ name: Daily Market Brief
 
 on:
   schedule:
-    - cron: "0 12 * * 1-5"  # 12:00 UTC = 7am EST (weekdays)
+    - cron: "0 10 * * 1-5"  # 12:00 UTC = 7am EST (weekdays)
   workflow_dispatch:         # manual trigger for testing
 
 jobs:
