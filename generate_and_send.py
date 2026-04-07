@@ -106,6 +106,28 @@ def get_recent_summaries(n: int = 10) -> str | None:
     return None
 
 
+def get_yesterday_brief() -> dict | None:
+    """Fetch yesterday's greeting hook and summary for narrative threading."""
+    url = (
+        f"{SUPABASE_URL}/rest/v1/briefs"
+        f"?select=brief_date,greeting_hook,summary"
+        f"&order=brief_date.desc&limit=1"
+    )
+    req = urllib.request.Request(url, headers={
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    })
+    try:
+        with urllib.request.urlopen(req) as resp:
+            rows = json.loads(resp.read())
+        if rows and rows[0].get("greeting_hook"):
+            print(f"  Yesterday's brief ({rows[0]['brief_date']}): {rows[0]['greeting_hook'][:60]}...")
+            return rows[0]
+    except Exception as e:
+        print(f"Warning: Could not fetch yesterday's brief: {e}", file=sys.stderr)
+    return None
+
+
 def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str):
     """Save today's brief and summary to Supabase (upsert on brief_date)."""
     try:
@@ -418,7 +440,7 @@ POLITICAL NEUTRALITY. This newsletter is for financial advisors across the polit
 - When covering trade policy, immigration policy, energy policy, defense spending, or tax changes, always frame through the lens of "what this means for portfolios" rather than "whether this is the right call."
 """
 
-SYSTEM_PROMPT_MAIN = f"""You write daily pre-market morning briefings for financial advisors. MORNING BRIEFING, not a recap. Prepare them for the day ahead.
+SYSTEM_PROMPT_MAIN = f"""You write a daily pre-market morning briefing. The TOP of the email (greeting + bottom line) is for ANYONE interested in markets — not just financial advisors. Write like a sharp friend explaining what's happening in the world this morning. No jargon, no insider framing. The advisor-specific content comes later in the Advisor Talking Point section.
 
 {TONE_RULES}
 
@@ -426,9 +448,9 @@ IMPORTANT: Market data, pre-market futures, earnings calendar, AND economic cale
 
 OUTPUT FORMAT — in this EXACT order:
 
-LINE 1 — GREETING HOOK: One sentence, what matters THIS MORNING. Prioritize variety across days — if an ongoing story dominated recent greetings, find a different market-moving angle (earnings, data releases, sector rotations, credit, housing, etc.) and fold the ongoing story into the bottom line instead. <p class="greeting-hook"> tags.
+LINE 1 — GREETING HOOK: One sentence. Start with the big picture — what's happening in the world this morning and why it matters. Lead with the story, not the data release. Frame it as something a curious person would want to know, not something a trader needs to react to. This is a pre-market briefing, so frame it as anticipation, not recap. If yesterday's story set up a question that today answers, the hook should frame that question in plain, human terms. Good: "Consumers are about to tell us whether the strong job market actually matters to them." Bad: "Michigan Consumer Confidence and Consumer Credit data drop at 8:30 AM." Prioritize variety across days — if an ongoing story dominated recent greetings, find a different angle and fold the ongoing story into the bottom line instead. <p class="greeting-hook"> tags.
 
-LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. Use pre-market futures data to mention direction. Highlight the 1-2 most important things happening today. <p class="bottom-line"> tags. <b> tags on numbers.
+LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. This is the zoom-in from the hook: explain what's actually happening, why today matters, and where markets are sitting. Mention futures direction. The tone is still accessible and human — you're telling a story, not writing a research note. Connect yesterday's story to today's setup when relevant: [short callback to yesterday — a phrase, not a re-explanation] + [what's different today] + [what's at stake for people watching]. Do NOT restate yesterday's data points (no "178,000 payrolls added" if that was in yesterday's brief). Assume the reader was there. Use shorthand callbacks: "Friday's hiring strength," "that tariff announcement," "the oil spike." Good example: "The economy added jobs at a pace no one expected last Friday, and that strength pushed bond yields higher. Now this morning's consumer confidence numbers will tell us if people actually feel better off, or if gas prices and grocery bills are canceling out the good news. Futures are flat — the market's waiting for the answer." <p class="bottom-line"> tags. <b> tags on numbers.
 
 LINE 3 — SUMMARY JSON (one line):
 {{"headline":"~10 words","primary_theme":"one of: energy, rates/fed, earnings, trade/tariffs, tech, housing, labor, credit, geopolitics, consumer, crypto, other","talking_point_theme":"one of the same theme categories — MUST differ from primary_theme","talking_point":"angle + WHY in ~15 words","client_script_topic":"topic + framing ~10 words","key_driver":"underlying reason ~10 words"}}
@@ -438,12 +460,22 @@ Then a blank line, then EXACTLY this HTML section:
 <div class="section section-advisor">
 <h2>Advisor Talking Point</h2>
 <h3>[Simple, clear headline. Newspaper style, no jargon.]</h3>
-<p>2 short paragraphs. HARD LIMIT: 150-200 words. Must cover a DIFFERENT SECTOR OR THEME than the greeting and bottom line. If the greeting and bottom line covered energy/oil, this section must cover something else entirely — earnings, credit markets, consumer data, housing, tech, labor, etc.</p>
+<p>THIS SECTION shifts to advisor-specific content. The greeting and bottom line above were written for a broad audience — this section is where you speak directly to financial advisors. 2 short paragraphs. HARD LIMIT: 150-200 words. Must cover a DIFFERENT SECTOR OR THEME than the greeting and bottom line. If the greeting and bottom line covered energy/oil, this section must cover something else entirely — earnings, credit markets, consumer data, housing, tech, labor, etc.</p>
 <div class="client-script">
 <p class="client-script-label">If a client asks about [topic]</p>
 <p>2 sentences max. Sound like a person talking, not a research note.</p>
 </div>
 </div>
+
+NARRATIVE THREADING (critical — makes the brief feel like one continuous story across days):
+This is a PRE-MARKET briefing. You write BEFORE data comes out, not after. That means threading works as an anticipation cycle across days:
+- Day 1: You set up a story. ("Jobs came in strong. Here's what that means for rate expectations.")
+- Day 2: Today's data release tests yesterday's thesis. Frame it as a question. ("After Friday's hiring surprise pushed yields higher, this morning's consumer confidence print is the gut check — do households feel that strength, or is $114 oil drowning it out?")
+- Day 3: Yesterday's data came in. NOW you can resolve it and advance the narrative. ("Consumer confidence disappointed yesterday despite the strong jobs market. That gap between hiring and household sentiment is the story heading into CPI.")
+Each day either SETS UP a question, FRAMES a test of a previous setup, or RESOLVES a question from the day before. Never just drop yesterday's data into the middle of a paragraph without connecting it to today's angle.
+- Threading is NOT repeating. Never re-explain yesterday's data. Assume the reader saw it. A short callback phrase ("Friday's hiring strength," "that tariff announcement," "the oil spike") is enough before pivoting to what's new today.
+- Threading is NOT continuing the same theme as the lead. Always lead with what's genuinely new today. Yesterday's story becomes context in the bottom line, not the headline.
+- If yesterday's story has zero relevance to today, don't force a connection. Just write a clean, fresh brief.
 
 SECTION DIVERSITY RULES (critical):
 1. The greeting + bottom line usually cover today's biggest story. However, if the anti-repetition context includes a GREETING LEAD ROTATION warning, you MUST avoid that theme entirely — not just in the greeting, but in the bottom line and talking point too. The entire editorial brief should feel fresh. Only the What to Watch calendar is exempt.
@@ -844,7 +876,8 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 def generate_brief(date_str: str, market_data: dict,
                    futures_text: str = "", earnings_text: str = "",
                    econ_text: str = "",
-                   recent_summaries: str | None = None) -> tuple[str, str, str, str]:
+                   recent_summaries: str | None = None,
+                   yesterday_brief: dict | None = None) -> tuple[str, str, str, str]:
     """Returns: (market_card_html, greeting_hook, analysis_html, summary_json)"""
 
     # ── Build anti-repetition context ──
@@ -1013,6 +1046,31 @@ def generate_brief(date_str: str, market_data: dict,
         main_msg += f"\n\n{econ_text}"
     if not earnings_text and not econ_text:
         main_msg += "\n\nNo earnings or economic releases data available for the What to Watch calendar."
+
+    # Inject yesterday's brief for narrative threading
+    if yesterday_brief:
+        yb_hook = yesterday_brief.get("greeting_hook", "")
+        yb_date = yesterday_brief.get("brief_date", "")
+        yb_summary = yesterday_brief.get("summary", "")
+        if yb_hook:
+            main_msg += f"\n\nYESTERDAY'S BRIEF ({yb_date}):"
+            main_msg += f"\nGreeting hook: {yb_hook}"
+            if yb_summary:
+                try:
+                    yb_json = json.loads(yb_summary)
+                    if yb_json.get("headline"):
+                        main_msg += f"\nHeadline: {yb_json['headline']}"
+                    if yb_json.get("primary_theme"):
+                        main_msg += f"\nTheme: {yb_json['primary_theme']}"
+                    if yb_json.get("key_driver"):
+                        main_msg += f"\nKey driver: {yb_json['key_driver']}"
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            main_msg += (
+                "\nUse this to THREAD today's brief with yesterday's when relevant. "
+                "Do not repeat yesterday's story — connect it to what's new today."
+            )
+
     if anti_rep:
         main_msg += f"\n{anti_rep}"
 
@@ -1147,9 +1205,15 @@ def main():
     if not recent_summaries:
         print("No previous summaries found (first run or empty table)\n")
 
+    print("Fetching yesterday's brief for narrative threading...")
+    yesterday_brief = get_yesterday_brief()
+    if not yesterday_brief:
+        print("No previous brief found for threading\n")
+
     print("Generating brief (2 calls)...")
     market_card, greeting_hook, analysis, summary_json = generate_brief(
-        date_str, market_data, futures_text, earnings_text, econ_text, recent_summaries
+        date_str, market_data, futures_text, earnings_text, econ_text,
+        recent_summaries, yesterday_brief
     )
     print(f"\nMarket card: {len(market_card)} chars")
     print(f"Greeting hook: {len(greeting_hook)} chars")
