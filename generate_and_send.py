@@ -480,8 +480,9 @@ Each day either SETS UP a question, FRAMES a test of a previous setup, or RESOLV
 SECTION DIVERSITY RULES (critical):
 1. The greeting + bottom line usually cover today's biggest story. However, if the anti-repetition context includes a GREETING LEAD ROTATION warning, you MUST avoid that theme entirely — not just in the greeting, but in the bottom line and talking point too. The entire editorial brief should feel fresh. Only the What to Watch calendar is exempt.
 2. The Advisor Talking Point MUST cover a DIFFERENT THEME/SECTOR than the greeting and bottom line. If the top story is energy, the talking point should be about earnings, credit, housing, consumer data, labor, tech, or anything else. Find a fresh angle from the earnings calendar, economic data, or a different market sector.
-3. Never state the same fact, company name, data point, or event in both the bottom line and the talking point.
-4. The primary_theme and talking_point_theme fields in the summary JSON MUST be different from each other.
+3. ADJACENCY GUARD: A different theme label is not enough. The Advisor Talking Point must not be a downstream consequence, sector-application, or reframing of the SAME underlying story as the greeting/bottom line. It must be a genuinely separate story line. Examples of what's BANNED: greeting=oil spike → TP=how earnings season copes with higher oil (same story, different sector); greeting=bank earnings beat → TP=Fed rate path implications for those banks (same story, different framing); greeting=Iran ceasefire → TP=credit spreads tightening on the relief (same story, different asset class). Examples of what's GOOD: greeting=oil spike → TP=housing affordability under stuck mortgage rates; greeting=bank earnings → TP=a specific sector's pre-announcement (e.g., a retailer's guidance cut). Test yourself: if you removed the greeting/bottom line entirely, would the talking point still make sense as a standalone story? If no, it's adjacency — pick something else.
+4. Never state the same fact, company name, data point, or event in both the bottom line and the talking point.
+5. The primary_theme and talking_point_theme fields in the summary JSON MUST be different from each other.
 
 Total across greeting + bottom line + talking point: 200-300 words. No more. Start with greeting hook. No preamble.
 
@@ -995,12 +996,28 @@ def generate_brief(date_str: str, market_data: dict,
                 + "\n".join(f"- {x}" for x in recent_greetings)
             )
 
-        # Recent talking point themes (so the model avoids repeating those too)
+        # Talking point theme saturation + hard block on recent TP themes
         if tp_themes:
-            recent_tp = [f"{d}: {t}" for d, t in tp_themes[-5:]]
+            tp_counts = Counter(t[1] for t in tp_themes)
+            tp_overused = [t for t, c in tp_counts.items() if c >= 3]
+            if tp_overused:
+                print(f"    ⚠ TP saturation: {tp_overused} appeared 3+ times in last {len(tp_themes)} briefs")
+                anti_rep += (
+                    f"\n\nTALKING POINT SATURATION WARNING: These themes have dominated "
+                    f"the Advisor Talking Point in recent briefs: {', '.join(tp_overused)}. "
+                    f"Today's talking_point_theme MUST NOT be any of these. "
+                    f"Choose from earnings, credit, housing, labor, consumer, tech, "
+                    f"trade/tariffs, rates/fed, geopolitics, energy, crypto, or another "
+                    f"under-covered sector."
+                )
+
+            recent_tp_block = list(dict.fromkeys(t for _, t in tp_themes[-3:]))
+            recent_tp_display = [f"{d}: {t}" for d, t in tp_themes[-5:]]
             anti_rep += (
-                f"\n\nRECENT TALKING POINT THEMES (pick something different):\n"
-                + "\n".join(f"- {x}" for x in recent_tp)
+                f"\n\nRECENT TALKING POINT THEMES (last 5 briefs):\n"
+                + "\n".join(f"- {x}" for x in recent_tp_display)
+                + f"\n\nHARD BLOCK: today's talking_point_theme MUST differ from the "
+                f"last 3 TP themes ({', '.join(recent_tp_block)}). No exceptions."
             )
 
         # Recent client scripts (must not reuse)
