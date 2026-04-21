@@ -354,26 +354,25 @@ def fetch_earnings_calendar() -> str:
 
 # ── Economic Calendar (FRED API) ──────────────────────────────
 
-# Each entry: release_id -> (display_name, release_time_et, why_it_matters).
+# Each entry: release_id -> (display_name, release_time_et).
 # release_time is ET; empty string means "see announcement" (FOMC statements float).
-# why_it_matters is a short advisor-facing annotation — what the release tells a client.
 FRED_RELEASES = {
-    10:  ("CPI",                            "8:30 AM",  "inflation heat check; moves Fed"),
-    46:  ("PPI",                            "8:30 AM",  "producer inflation; precedes CPI"),
-    50:  ("Employment Situation (NFP)",     "8:30 AM",  "jobs report; biggest single mover"),
-    180: ("Unemployment Claims",            "8:30 AM",  "weekly labor market pulse"),
-    53:  ("GDP",                            "8:30 AM",  "growth scorecard; recession signal"),
-    9:   ("Retail Sales",                   "8:30 AM",  "consumer spending pulse"),
-    54:  ("Personal Income & Outlays",      "8:30 AM",  "includes PCE — Fed's inflation gauge"),
-    13:  ("Industrial Production",          "9:15 AM",  "manufacturing sector pulse"),
-    11:  ("Employment Cost Index",          "8:30 AM",  "quarterly wage pressure"),
-    91:  ("Consumer Sentiment (Michigan)",  "10:00 AM", "household confidence bellwether"),
-    14:  ("Consumer Credit",                "3:00 PM",  "borrowing appetite"),
-    291: ("Existing Home Sales",            "10:00 AM", "existing-market housing pulse"),
-    97:  ("New Home Sales",                 "10:00 AM", "new-construction housing pulse"),
-    27:  ("Housing Starts",                 "8:30 AM",  "builder activity leading indicator"),
-    192: ("JOLTs",                          "10:00 AM", "job openings; Fed watches closely"),
-    101: ("FOMC Press Release",             "2:00 PM",  "Fed rate decision"),
+    10:  ("CPI",                            "8:30 AM"),
+    46:  ("PPI",                            "8:30 AM"),
+    50:  ("Employment Situation (NFP)",     "8:30 AM"),
+    180: ("Unemployment Claims",            "8:30 AM"),
+    53:  ("GDP",                            "8:30 AM"),
+    9:   ("Retail Sales",                   "8:30 AM"),
+    54:  ("Personal Income & Outlays",      "8:30 AM"),
+    13:  ("Industrial Production",          "9:15 AM"),
+    11:  ("Employment Cost Index",          "8:30 AM"),
+    91:  ("Consumer Sentiment (Michigan)",  "10:00 AM"),
+    14:  ("Consumer Credit",                "3:00 PM"),
+    291: ("Existing Home Sales",            "10:00 AM"),
+    97:  ("New Home Sales",                 "10:00 AM"),
+    27:  ("Housing Starts",                 "8:30 AM"),
+    192: ("JOLTs",                          "10:00 AM"),
+    101: ("FOMC Press Release",             "2:00 PM"),
 }
 
 def fetch_fred_calendar() -> str:
@@ -391,7 +390,7 @@ def fetch_fred_calendar() -> str:
     past_30 = today - timedelta(days=30)
 
     releases = []
-    for release_id, (name, release_time, why) in FRED_RELEASES.items():
+    for release_id, (name, release_time) in FRED_RELEASES.items():
         try:
             url = (
                 f"https://api.stlouisfed.org/fred/release/dates"
@@ -414,7 +413,7 @@ def fetch_fred_calendar() -> str:
 
             for rd_date in all_dates:
                 if today <= rd_date <= window_end:
-                    releases.append((rd_date, name, release_time, why))
+                    releases.append((rd_date, name, release_time))
                     break
         except Exception:
             continue
@@ -427,7 +426,7 @@ def fetch_fred_calendar() -> str:
 
     lines = []
     current_date = None
-    for rd_date, name, release_time, why in releases:
+    for rd_date, name, release_time in releases:
         if rd_date != current_date:
             day_label = rd_date.strftime("%A, %b %d")
             if rd_date == today:
@@ -435,7 +434,7 @@ def fetch_fred_calendar() -> str:
             lines.append(f"\n{day_label}:")
             current_date = rd_date
         time_part = release_time if release_time else "(time TBD)"
-        lines.append(f"  {time_part} — {name} — {why}")
+        lines.append(f"  {time_part}  {name}")
 
     result = "ECONOMIC CALENDAR (upcoming releases):" + "".join(lines)
     print(f"  Found {len(releases)} releases in this window")
@@ -520,29 +519,30 @@ Total across greeting + bottom line + talking point: 200-300 words. No more. Sta
 Then, AFTER the Advisor Talking Point section, output the "What to Watch" calendar section using the pre-computed earnings AND economic calendar data from the user message.
 
 CALENDAR RULES (strict):
-1. Copy the date header, release time, release name, and "why it matters" annotation EXACTLY from the ECONOMIC CALENDAR block below. Do not invent a release time. Do not paraphrase the annotation.
+1. Copy the date header, release time, and release name EXACTLY from the ECONOMIC CALENDAR block below. Do not invent a release time. Do not add a description, commentary, or "why it matters" annotation. Name the event and nothing more.
 2. Use the calendar's date labels verbatim ("Tuesday, Apr 21 (today)", "Thursday, Apr 23", etc.). Do NOT re-bucket events under "Today" / "Tomorrow" / "Next Week" generic headers.
-3. Render each economic release as a table row: time in the first cell, "Release Name — why it matters" in the second cell.
-4. If an earnings block is provided, add an Earnings row under the matching date with the ticker list verbatim. If no earnings data is provided, OMIT the Earnings row entirely. Never write "No earnings this week", "No major S&P 500 earnings today", or any similar placeholder — an empty cell is wrong, a missing row is right.
+3. Render each economic release as a table row: time in the first cell, release name in the second cell. The second cell contains the release name only.
+4. If an earnings block is provided, add an Earnings row under the matching date with the ticker list verbatim. If no earnings data is provided, OMIT the Earnings row entirely. Never write "No earnings this week", "No major S&P 500 earnings today", or any similar placeholder. An empty cell is wrong; a missing row is right.
 5. Never use markdown formatting. Bold is <b>X</b>, italics are <i>X</i>. Do not write **X** or *X*.
-6. Do not emit any tool-use tags such as &lt;invoke&gt;, &lt;function_calls&gt;, or similar. The output must be clean HTML only.
+6. Never use em dashes ( — ). Use commas, colons, periods, or parentheses. This rule applies to every section of the brief, not just the calendar.
+7. Do not emit any tool-use tags such as &lt;invoke&gt;, &lt;function_calls&gt;, or similar. The output must be clean HTML only.
 
-Output this HTML shape (the specific dates/releases below are a structural example — replace with whatever the data blocks below actually contain):
+Output this HTML shape (the specific dates and releases below are a structural example; replace with whatever the data blocks below actually contain):
 
 <div class="section">
 <h2>What to Watch</h2>
 <table class="watch-calendar">
 <tr class="watch-group"><td colspan="2">Tuesday, Apr 21 (today)</td></tr>
-<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Retail Sales — consumer spending pulse</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Retail Sales</td></tr>
 <tr><td class="watch-time">Earnings</td><td class="watch-desc">Company Name (TICK), Company Name (TICK)</td></tr>
 <tr class="watch-group"><td colspan="2">Thursday, Apr 23</td></tr>
-<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Unemployment Claims — weekly labor market pulse</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Unemployment Claims</td></tr>
 <tr class="watch-group"><td colspan="2">Friday, Apr 24</td></tr>
-<tr><td class="watch-time">10:00 AM</td><td class="watch-desc">Consumer Sentiment (Michigan) — household confidence bellwether</td></tr>
+<tr><td class="watch-time">10:00 AM</td><td class="watch-desc">Consumer Sentiment (Michigan)</td></tr>
 </table>
 </div>
 
-The calendar table is the ENTIRE section — no prose before or after."""
+The calendar table is the ENTIRE section. No prose before or after."""
 
 SYSTEM_PROMPT_WATERCOOLER = f"""You write the "Water Cooler" section for a daily financial advisor morning briefing. Your job is to find ONE interesting, real, US-focused story that is completely unrelated to the main market news of the day.
 
@@ -623,14 +623,25 @@ def _md_bold_to_html(text: str) -> str:
     return re.sub(r'\*\*([^*\n]+?)\*\*', r'<b>\1</b>', text)
 
 
+def _strip_em_dashes(text: str) -> str:
+    """Replace em dashes with other punctuation. Connor has a hard rule
+    against em dashes in Briefly output, and Haiku emits them by default."""
+    # " — " parenthetical use becomes ", "
+    text = re.sub(r'\s+—\s+', ', ', text)
+    # Any remaining em dash becomes a comma
+    text = text.replace('—', ',')
+    return text
+
+
 def _strip_model_artifacts(html: str) -> str:
     """Remove stray tokens the model occasionally emits: tool-use-ish tags,
-    the WATER_COOLER_SUMMARY bookkeeping line, and any lingering markdown
-    bold. These would otherwise render as literal text in the email."""
+    the WATER_COOLER_SUMMARY bookkeeping line, markdown bold, and em dashes.
+    These would otherwise render as literal text in the email."""
     html = re.sub(r'</?invoke[^>]*>', '', html)
     html = re.sub(r'</?antml:[^>]+>', '', html)
     html = re.sub(r'^\s*WATER_COOLER_SUMMARY:.*$', '', html, flags=re.MULTILINE)
     html = _md_bold_to_html(html)
+    html = _strip_em_dashes(html)
     return html
 
 
@@ -640,13 +651,13 @@ def parse_main_response(raw: str) -> tuple[str, str, str, str]:
     greeting_hook = ""
     hook_match = re.search(r'<p class="greeting-hook">(.*?)</p>', raw, re.DOTALL)
     if hook_match:
-        greeting_hook = _md_bold_to_html(hook_match.group(1).strip())
+        greeting_hook = _strip_em_dashes(_md_bold_to_html(hook_match.group(1).strip()))
         print(f"  Greeting hook: {greeting_hook[:80]}...")
 
     bottom_line = ""
     bl_match = re.search(r'<p class="bottom-line">(.*?)</p>', raw, re.DOTALL)
     if bl_match:
-        bottom_line = _md_bold_to_html(bl_match.group(1).strip())
+        bottom_line = _strip_em_dashes(_md_bold_to_html(bl_match.group(1).strip()))
         print(f"  Bottom line: {bottom_line[:80]}...")
 
     summary_json = ""
