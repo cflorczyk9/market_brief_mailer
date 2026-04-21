@@ -354,23 +354,26 @@ def fetch_earnings_calendar() -> str:
 
 # ── Economic Calendar (FRED API) ──────────────────────────────
 
+# Each entry: release_id -> (display_name, release_time_et, why_it_matters).
+# release_time is ET; empty string means "see announcement" (FOMC statements float).
+# why_it_matters is a short advisor-facing annotation — what the release tells a client.
 FRED_RELEASES = {
-    10:  "CPI",
-    46:  "PPI",
-    53:  "GDP",
-    50:  "Employment Situation (Jobs Report)",
-    180: "Unemployment Claims",
-    13:  "Industrial Production",
-    11:  "Employment Cost Index",
-    14:  "Consumer Credit",
-    91:  "Consumer Sentiment (Michigan)",
-    54:  "Personal Income & Outlays (incl. PCE)",
-    9:   "Retail Sales",
-    291: "Existing Home Sales",
-    97:  "New Home Sales",
-    27:  "New Residential Construction (Housing Starts)",
-    101: "FOMC Press Release",
-    192: "JOLTs",
+    10:  ("CPI",                            "8:30 AM",  "inflation heat check; moves Fed"),
+    46:  ("PPI",                            "8:30 AM",  "producer inflation; precedes CPI"),
+    50:  ("Employment Situation (NFP)",     "8:30 AM",  "jobs report; biggest single mover"),
+    180: ("Unemployment Claims",            "8:30 AM",  "weekly labor market pulse"),
+    53:  ("GDP",                            "8:30 AM",  "growth scorecard; recession signal"),
+    9:   ("Retail Sales",                   "8:30 AM",  "consumer spending pulse"),
+    54:  ("Personal Income & Outlays",      "8:30 AM",  "includes PCE — Fed's inflation gauge"),
+    13:  ("Industrial Production",          "9:15 AM",  "manufacturing sector pulse"),
+    11:  ("Employment Cost Index",          "8:30 AM",  "quarterly wage pressure"),
+    91:  ("Consumer Sentiment (Michigan)",  "10:00 AM", "household confidence bellwether"),
+    14:  ("Consumer Credit",                "3:00 PM",  "borrowing appetite"),
+    291: ("Existing Home Sales",            "10:00 AM", "existing-market housing pulse"),
+    97:  ("New Home Sales",                 "10:00 AM", "new-construction housing pulse"),
+    27:  ("Housing Starts",                 "8:30 AM",  "builder activity leading indicator"),
+    192: ("JOLTs",                          "10:00 AM", "job openings; Fed watches closely"),
+    101: ("FOMC Press Release",             "2:00 PM",  "Fed rate decision"),
 }
 
 def fetch_fred_calendar() -> str:
@@ -388,7 +391,7 @@ def fetch_fred_calendar() -> str:
     past_30 = today - timedelta(days=30)
 
     releases = []
-    for release_id, name in FRED_RELEASES.items():
+    for release_id, (name, release_time, why) in FRED_RELEASES.items():
         try:
             url = (
                 f"https://api.stlouisfed.org/fred/release/dates"
@@ -411,7 +414,7 @@ def fetch_fred_calendar() -> str:
 
             for rd_date in all_dates:
                 if today <= rd_date <= window_end:
-                    releases.append((rd_date, name))
+                    releases.append((rd_date, name, release_time, why))
                     break
         except Exception:
             continue
@@ -424,12 +427,15 @@ def fetch_fred_calendar() -> str:
 
     lines = []
     current_date = None
-    for rd_date, name in releases:
+    for rd_date, name, release_time, why in releases:
         if rd_date != current_date:
-            day_label = "Today" if rd_date == today else rd_date.strftime("%A %b %d")
+            day_label = rd_date.strftime("%A, %b %d")
+            if rd_date == today:
+                day_label += " (today)"
             lines.append(f"\n{day_label}:")
             current_date = rd_date
-        lines.append(f"  {name}")
+        time_part = release_time if release_time else "(time TBD)"
+        lines.append(f"  {time_part} — {name} — {why}")
 
     result = "ECONOMIC CALENDAR (upcoming releases):" + "".join(lines)
     print(f"  Found {len(releases)} releases in this window")
@@ -471,9 +477,11 @@ IMPORTANT: Market data, pre-market futures, earnings calendar, AND economic cale
 
 OUTPUT FORMAT — in this EXACT order:
 
-LINE 1 — GREETING HOOK: One sentence. Start with the big picture — what's happening in the world this morning and why it matters. Lead with the story, not the data release. Frame it as something a curious person would want to know, not something a trader needs to react to. This is a pre-market briefing, so frame it as anticipation, not recap. If yesterday's story set up a question that today answers, the hook should frame that question in plain, human terms. Good: "Consumers are about to tell us whether the strong job market actually matters to them." Bad: "Michigan Consumer Confidence and Consumer Credit data drop at 8:30 AM." Prioritize variety across days — if an ongoing story dominated recent greetings, find a different angle and fold the ongoing story into the bottom line instead. <p class="greeting-hook"> tags.
+GROUNDING — CRITICAL: Only describe a data release as "this morning" / "today" if it appears under the "(today)" header in the ECONOMIC CALENDAR block below. If the calendar shows a release on a future day, write it as anticipation for that specific weekday, not today. If the calendar is empty, do not invent a release. Use the release time printed in the calendar block — never invent a time.
 
-LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. This is the zoom-in from the hook: explain what's actually happening, why today matters, and where markets are sitting. Mention futures direction. The tone is still accessible and human — you're telling a story, not writing a research note. Connect yesterday's story to today's setup when relevant: [short callback to yesterday — a phrase, not a re-explanation] + [what's different today] + [what's at stake for people watching]. Do NOT restate yesterday's data points (no "178,000 payrolls added" if that was in yesterday's brief). Assume the reader was there. Use shorthand callbacks: "Friday's hiring strength," "that tariff announcement," "the oil spike." Good example: "The economy added jobs at a pace no one expected last Friday, and that strength pushed bond yields higher. Now this morning's consumer confidence numbers will tell us if people actually feel better off, or if gas prices and grocery bills are canceling out the good news. Futures are flat — the market's waiting for the answer." <p class="bottom-line"> tags. <b> tags on numbers.
+LINE 1 — GREETING HOOK: One sentence. Start with the big picture — what's happening in the world this morning and why it matters. Lead with the story, not the data release. Frame it as something a curious person would want to know, not something a trader needs to react to. This is a pre-market briefing, so frame it as anticipation, not recap. If yesterday's story set up a question that today answers, the hook should frame that question in plain, human terms. Good: "Retail sales will tell us whether the hiring strength is actually showing up in spending." Bad: "Retail Sales and Housing Starts drop at 8:30 AM." Prioritize variety across days — if an ongoing story dominated recent greetings, find a different angle and fold the ongoing story into the bottom line instead. <p class="greeting-hook"> tags.
+
+LINE 2 — BOTTOM LINE: 2-3 flowing sentences. Plain prose, NO labels, NO sub-headings. This is the zoom-in from the hook: explain what's actually happening, why today matters, and where markets are sitting. Mention futures direction. The tone is still accessible and human — you're telling a story, not writing a research note. Connect yesterday's story to today's setup when relevant: [short callback to yesterday — a phrase, not a re-explanation] + [what's different today] + [what's at stake for people watching]. Do NOT restate yesterday's data points (no "178,000 payrolls added" if that was in yesterday's brief). Assume the reader was there. Use shorthand callbacks: "Friday's hiring strength," "that tariff announcement," "the oil spike." Good example (structure, not content — use whatever release is actually on today's calendar): "The economy added jobs at a pace no one expected last Friday, and that strength pushed bond yields higher. Retail sales this morning test whether that hiring is translating into real spending, or if households are sitting on their hands. Futures are flat — the market's waiting for the answer." <p class="bottom-line"> tags. <b> tags on numbers.
 
 LINE 3 — SUMMARY JSON (one line):
 {{"headline":"~10 words","primary_theme":"one of: energy, rates/fed, earnings, trade/tariffs, tech, housing, labor, credit, geopolitics, consumer, crypto, other","talking_point_theme":"one of the same theme categories — MUST differ from primary_theme","talking_point":"angle + WHY in ~15 words","client_script_topic":"topic + framing ~10 words","key_driver":"underlying reason ~10 words"}}
@@ -491,10 +499,10 @@ Then a blank line, then EXACTLY this HTML section:
 </div>
 
 NARRATIVE THREADING (critical — makes the brief feel like one continuous story across days):
-This is a PRE-MARKET briefing. You write BEFORE data comes out, not after. That means threading works as an anticipation cycle across days:
+This is a PRE-MARKET briefing. You write BEFORE data comes out, not after. That means threading works as an anticipation cycle across days. Examples use placeholder release names — substitute whatever the ECONOMIC CALENDAR actually shows today:
 - Day 1: You set up a story. ("Jobs came in strong. Here's what that means for rate expectations.")
-- Day 2: Today's data release tests yesterday's thesis. Frame it as a question. ("After Friday's hiring surprise pushed yields higher, this morning's consumer confidence print is the gut check — do households feel that strength, or is $114 oil drowning it out?")
-- Day 3: Yesterday's data came in. NOW you can resolve it and advance the narrative. ("Consumer confidence disappointed yesterday despite the strong jobs market. That gap between hiring and household sentiment is the story heading into CPI.")
+- Day 2: Today's data release tests yesterday's thesis. Frame it as a question. ("After Friday's hiring surprise pushed yields higher, this morning's [release from today's calendar] is the gut check — does the other side of the economy line up with the jobs picture, or not?")
+- Day 3: Yesterday's data came in. NOW you can resolve it and advance the narrative. ("[Yesterday's release] disappointed yesterday despite the strong jobs market. That gap is the story heading into the next data point.")
 Each day either SETS UP a question, FRAMES a test of a previous setup, or RESOLVES a question from the day before. Never just drop yesterday's data into the middle of a paragraph without connecting it to today's angle.
 - Threading is NOT repeating. Never re-explain yesterday's data. Assume the reader saw it. A short callback phrase ("Friday's hiring strength," "that tariff announcement," "the oil spike") is enough before pivoting to what's new today.
 - Threading is NOT continuing the same theme as the lead. Always lead with what's genuinely new today. Yesterday's story becomes context in the bottom line, not the headline.
@@ -509,22 +517,30 @@ SECTION DIVERSITY RULES (critical):
 
 Total across greeting + bottom line + talking point: 200-300 words. No more. Start with greeting hook. No preamble.
 
-Then, AFTER the Advisor Talking Point section, output the "What to Watch" calendar section using the pre-computed earnings AND economic calendar data from the user message:
+Then, AFTER the Advisor Talking Point section, output the "What to Watch" calendar section using the pre-computed earnings AND economic calendar data from the user message.
+
+CALENDAR RULES (strict):
+1. Copy the date header, release time, release name, and "why it matters" annotation EXACTLY from the ECONOMIC CALENDAR block below. Do not invent a release time. Do not paraphrase the annotation.
+2. Use the calendar's date labels verbatim ("Tuesday, Apr 21 (today)", "Thursday, Apr 23", etc.). Do NOT re-bucket events under "Today" / "Tomorrow" / "Next Week" generic headers.
+3. Render each economic release as a table row: time in the first cell, "Release Name — why it matters" in the second cell.
+4. If an earnings block is provided, add an Earnings row under the matching date with the ticker list verbatim. If no earnings data is provided, write exactly one Earnings row under the today header with description "No major S&P 500 earnings this week." — do NOT name any companies.
+
+Output this HTML shape (the specific dates/releases below are a structural example — replace with whatever the data blocks below actually contain):
 
 <div class="section">
 <h2>What to Watch</h2>
 <table class="watch-calendar">
-<tr class="watch-group"><td colspan="2">Today</td></tr>
-<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Specific data release name</td></tr>
+<tr class="watch-group"><td colspan="2">Tuesday, Apr 21 (today)</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Retail Sales — consumer spending pulse</td></tr>
 <tr><td class="watch-time">Earnings</td><td class="watch-desc">Company Name (TICK), Company Name (TICK)</td></tr>
-<tr class="watch-group"><td colspan="2">Tomorrow</td></tr>
-<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Specific data release</td></tr>
-<tr class="watch-group"><td colspan="2">Next Week</td></tr>
-<tr><td class="watch-time">Wed</td><td class="watch-desc">FOMC decision</td></tr>
+<tr class="watch-group"><td colspan="2">Thursday, Apr 23</td></tr>
+<tr><td class="watch-time">8:30 AM</td><td class="watch-desc">Unemployment Claims — weekly labor market pulse</td></tr>
+<tr class="watch-group"><td colspan="2">Friday, Apr 24</td></tr>
+<tr><td class="watch-time">10:00 AM</td><td class="watch-desc">Consumer Sentiment (Michigan) — household confidence bellwether</td></tr>
 </table>
 </div>
 
-BE SPECIFIC with the calendar. Include all earnings and economic data grouped by day. If no earnings data is provided, note "No major S&P 500 earnings this week." The calendar table is the ENTIRE section — no prose before or after."""
+The calendar table is the ENTIRE section — no prose before or after."""
 
 SYSTEM_PROMPT_WATERCOOLER = f"""You write the "Water Cooler" section for a daily financial advisor morning briefing. Your job is to find ONE interesting, real, US-focused story that is completely unrelated to the main market news of the day.
 
@@ -1082,10 +1098,23 @@ def generate_brief(date_str: str, market_data: dict,
         main_msg += f"\n\n{futures_text}"
     if earnings_text:
         main_msg += f"\n\n{earnings_text}"
+    else:
+        main_msg += (
+            "\n\nEARNINGS: no S&P 500 earnings were returned for the next 7 days. "
+            "In the What to Watch table, use exactly this Earnings row under the today header: "
+            "'No major S&P 500 earnings this week.' Do NOT name any companies. "
+            "Do not reference any earnings dates in the greeting, bottom line, or talking point."
+        )
     if econ_text:
         main_msg += f"\n\n{econ_text}"
-    if not earnings_text and not econ_text:
-        main_msg += "\n\nNo earnings or economic releases data available for the What to Watch calendar."
+    else:
+        main_msg += (
+            "\n\nECONOMIC CALENDAR: no FRED releases were returned for the next 7 days. "
+            "Do NOT invent a release. Do NOT claim any indicator is releasing today. "
+            "If the calendar table would otherwise be empty, include only today's date header "
+            "with a single row: 'Earnings' | 'No major S&P 500 earnings this week.' and omit "
+            "other date rows."
+        )
 
     # Inject yesterday's brief for narrative threading
     if yesterday_brief:
