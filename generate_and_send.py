@@ -382,6 +382,11 @@ def fetch_fred_calendar() -> str:
     today = date.today()
     window_end = today + timedelta(days=7)
 
+    # Any market-moving indicator releases at most weekly. Anything that fires
+    # more often is operational plumbing (daily Commercial Paper, weekly bank
+    # balance sheets) and is noise in a pre-market brief. Drop it.
+    past_30 = today - timedelta(days=30)
+
     releases = []
     for release_id, name in FRED_RELEASES.items():
         try:
@@ -397,8 +402,14 @@ def fetch_fred_calendar() -> str:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
 
-            for rd in data.get("release_dates", []):
-                rd_date = date.fromisoformat(rd["date"])
+            all_dates = [date.fromisoformat(rd["date"]) for rd in data.get("release_dates", [])]
+
+            recent_count = sum(1 for d in all_dates if past_30 <= d <= today)
+            if recent_count > 8:
+                print(f"  Skipping release_id={release_id} ({name}): {recent_count} releases in last 30 days — operational, not market-moving")
+                continue
+
+            for rd_date in all_dates:
                 if today <= rd_date <= window_end:
                     releases.append((rd_date, name))
                     break
