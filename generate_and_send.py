@@ -523,7 +523,9 @@ CALENDAR RULES (strict):
 1. Copy the date header, release time, release name, and "why it matters" annotation EXACTLY from the ECONOMIC CALENDAR block below. Do not invent a release time. Do not paraphrase the annotation.
 2. Use the calendar's date labels verbatim ("Tuesday, Apr 21 (today)", "Thursday, Apr 23", etc.). Do NOT re-bucket events under "Today" / "Tomorrow" / "Next Week" generic headers.
 3. Render each economic release as a table row: time in the first cell, "Release Name — why it matters" in the second cell.
-4. If an earnings block is provided, add an Earnings row under the matching date with the ticker list verbatim. If no earnings data is provided, write exactly one Earnings row under the today header with description "No major S&P 500 earnings this week." — do NOT name any companies.
+4. If an earnings block is provided, add an Earnings row under the matching date with the ticker list verbatim. If no earnings data is provided, OMIT the Earnings row entirely. Never write "No earnings this week", "No major S&P 500 earnings today", or any similar placeholder — an empty cell is wrong, a missing row is right.
+5. Never use markdown formatting. Bold is <b>X</b>, italics are <i>X</i>. Do not write **X** or *X*.
+6. Do not emit any tool-use tags such as &lt;invoke&gt;, &lt;function_calls&gt;, or similar. The output must be clean HTML only.
 
 Output this HTML shape (the specific dates/releases below are a structural example — replace with whatever the data blocks below actually contain):
 
@@ -614,19 +616,37 @@ def call_anthropic(model: str, system: str, user_msg: str,
 
 # ── Parse Helpers ─────────────────────────────────────────────
 
+def _md_bold_to_html(text: str) -> str:
+    """Convert leaked markdown **bold** to <b>bold</b>. Haiku sometimes emits
+    markdown despite the prompt asking for <b> tags; this normalizes before
+    the text lands in HTML."""
+    return re.sub(r'\*\*([^*\n]+?)\*\*', r'<b>\1</b>', text)
+
+
+def _strip_model_artifacts(html: str) -> str:
+    """Remove stray tokens the model occasionally emits: tool-use-ish tags,
+    the WATER_COOLER_SUMMARY bookkeeping line, and any lingering markdown
+    bold. These would otherwise render as literal text in the email."""
+    html = re.sub(r'</?invoke[^>]*>', '', html)
+    html = re.sub(r'</?antml:[^>]+>', '', html)
+    html = re.sub(r'^\s*WATER_COOLER_SUMMARY:.*$', '', html, flags=re.MULTILINE)
+    html = _md_bold_to_html(html)
+    return html
+
+
 def parse_main_response(raw: str) -> tuple[str, str, str, str]:
     """Parse greeting + bottom line + advisor section from main call."""
 
     greeting_hook = ""
     hook_match = re.search(r'<p class="greeting-hook">(.*?)</p>', raw, re.DOTALL)
     if hook_match:
-        greeting_hook = hook_match.group(1).strip()
+        greeting_hook = _md_bold_to_html(hook_match.group(1).strip())
         print(f"  Greeting hook: {greeting_hook[:80]}...")
 
     bottom_line = ""
     bl_match = re.search(r'<p class="bottom-line">(.*?)</p>', raw, re.DOTALL)
     if bl_match:
-        bottom_line = bl_match.group(1).strip()
+        bottom_line = _md_bold_to_html(bl_match.group(1).strip())
         print(f"  Bottom line: {bottom_line[:80]}...")
 
     summary_json = ""
@@ -654,7 +674,7 @@ def parse_main_response(raw: str) -> tuple[str, str, str, str]:
                 clean.append(line)
             if s == '</div>' and '</td>' not in s:
                 in_html = False
-        advisor_html = '\n'.join(clean)
+        advisor_html = _strip_model_artifacts('\n'.join(clean))
 
     return greeting_hook, bottom_line, summary_json, advisor_html.strip()
 
@@ -674,8 +694,8 @@ def parse_html_section(raw: str) -> str:
                 clean.append(line)
             if s == '</div>' and '</td>' not in s:
                 in_html = False
-        return '\n'.join(clean).strip()
-    return raw.strip()
+        return _strip_model_artifacts('\n'.join(clean)).strip()
+    return _strip_model_artifacts(raw).strip()
 
 
 def parse_watercooler_summary(raw: str) -> str:
@@ -1101,8 +1121,9 @@ def generate_brief(date_str: str, market_data: dict,
     else:
         main_msg += (
             "\n\nEARNINGS: no S&P 500 earnings were returned for the next 7 days. "
-            "In the What to Watch table, use exactly this Earnings row under the today header: "
-            "'No major S&P 500 earnings this week.' Do NOT name any companies. "
+            "In the What to Watch table, OMIT the Earnings row entirely — do not add a "
+            "placeholder row, do not say 'No earnings this week', do not name any companies. "
+            "Each date group should contain only its economic-release rows. "
             "Do not reference any earnings dates in the greeting, bottom line, or talking point."
         )
     if econ_text:
@@ -1111,9 +1132,8 @@ def generate_brief(date_str: str, market_data: dict,
         main_msg += (
             "\n\nECONOMIC CALENDAR: no FRED releases were returned for the next 7 days. "
             "Do NOT invent a release. Do NOT claim any indicator is releasing today. "
-            "If the calendar table would otherwise be empty, include only today's date header "
-            "with a single row: 'Earnings' | 'No major S&P 500 earnings this week.' and omit "
-            "other date rows."
+            "If there are also no earnings, OMIT the entire What to Watch section — do not "
+            "emit the <div class=\"section\"><h2>What to Watch</h2>...</div> block at all."
         )
 
     # Inject yesterday's brief for narrative threading
