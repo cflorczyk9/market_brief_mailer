@@ -355,17 +355,22 @@ def fetch_earnings_calendar() -> str:
 # ── Economic Calendar (FRED API) ──────────────────────────────
 
 FRED_RELEASES = {
-    10: "CPI", 46: "PPI", 53: "GDP",
-    21: "Personal Income & Outlays (incl. PCE)",
-    50: "Employment Situation (Jobs Report)",
-    180: "Unemployment Claims", 19: "Retail Sales",
-    13: "Industrial Production",
-    86: "Consumer Confidence (Mich.)",
-    22: "Existing Home Sales", 166: "New Home Sales",
-    31: "New Residential Construction (Housing Starts)",
-    39: "FOMC Press Release", 11: "Employment Cost Index",
-    57: "JOLTs", 14: "Consumer Credit",
-    56: "ISM Manufacturing (PMI)",
+    10:  "CPI",
+    46:  "PPI",
+    53:  "GDP",
+    50:  "Employment Situation (Jobs Report)",
+    180: "Unemployment Claims",
+    13:  "Industrial Production",
+    11:  "Employment Cost Index",
+    14:  "Consumer Credit",
+    91:  "Consumer Sentiment (Michigan)",
+    54:  "Personal Income & Outlays (incl. PCE)",
+    9:   "Retail Sales",
+    291: "Existing Home Sales",
+    97:  "New Home Sales",
+    27:  "New Residential Construction (Housing Starts)",
+    101: "FOMC Press Release",
+    192: "JOLTs",
 }
 
 def fetch_fred_calendar() -> str:
