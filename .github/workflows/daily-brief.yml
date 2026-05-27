@@ -2,7 +2,7 @@ name: Daily Market Brief
 
 on:
   schedule:
-    - cron: "0 11 * * 1-5"  # 11:00 UTC = 5am CST / 6am CDT (weekdays). GitHub cron is fixed UTC; cannot auto-follow DST.
+    - cron: "0 10 * * 1-5"  # 10:00 UTC = 5am CDT / 4am CST (weekdays). GitHub cron is fixed UTC; cannot auto-follow DST. Anchored on CDT (summer).
   workflow_dispatch:
     inputs:
       test_mode:
