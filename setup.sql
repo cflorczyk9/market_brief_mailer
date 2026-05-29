@@ -31,6 +31,24 @@ CREATE TRIGGER subscribers_updated_at
 -- 2. RLS (daily script uses service_role key which bypasses this)
 ALTER TABLE subscribers ENABLE ROW LEVEL SECURITY;
 
+-- 2b. Briefs archive (daily script upserts one row per send). Powers:
+--   - the send-dedup guard (brief_already_sent checks brief_date)
+--   - narrative threading (get_yesterday_brief reads greeting_hook/summary)
+--   - anti-repetition history (get_recent_summaries reads summary)
+-- brief_date must be UNIQUE: save_brief upserts ON CONFLICT (brief_date).
+CREATE TABLE briefs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  brief_date date UNIQUE NOT NULL,
+  greeting_hook text DEFAULT '',
+  analysis text DEFAULT '',
+  summary text DEFAULT '',
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX idx_briefs_date ON briefs (brief_date DESC);
+
+ALTER TABLE briefs ENABLE ROW LEVEL SECURITY;
+
 -- 3. Subscribe function (call from your site when you add the button)
 CREATE OR REPLACE FUNCTION public.subscribe(
   p_email text,

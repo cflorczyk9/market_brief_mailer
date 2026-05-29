@@ -21,17 +21,28 @@ on:
         type: boolean
         default: true
 
+# Serialize all runs of this workflow. GitHub batches delayed scheduled runs,
+# so two backup crons can otherwise fire seconds apart and both pass the
+# "already sent today?" check before either records the send. With one run at a
+# time, the second waits, then sees the brief is already archived and no-ops.
+concurrency:
+  group: daily-brief
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   send-brief:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install yfinance
+        run: pip install "yfinance==1.4.1"
       - name: Generate and send
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

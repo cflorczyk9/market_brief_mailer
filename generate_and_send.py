@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import re
+import html
 import smtplib
 import ssl
 import time
@@ -880,7 +881,9 @@ def inline_analysis_styles(html: str) -> str:
 def build_email_html(market_card: str, analysis: str, greeting_hook: str,
                      date_str: str, name: str = "", unsub_url: str = "") -> str:
     greeting = ""
-    first_name = name.split()[0] if name else ""
+    # Subscriber name comes from the public signup form, so escape it before it
+    # lands in the email HTML.
+    first_name = html.escape(name.split()[0]) if name else ""
     if first_name and greeting_hook:
         greeting = (
             f'<p style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;'
