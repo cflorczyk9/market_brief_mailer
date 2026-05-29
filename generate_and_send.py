@@ -14,6 +14,7 @@ import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from collections import Counter
 import concurrent.futures
 import urllib.request
@@ -76,6 +77,24 @@ def get_subscribers() -> list[dict]:
     })
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())
+
+
+def brief_already_sent(iso_date: str) -> bool:
+    """True if a brief row already exists for this date. Lets redundant backup
+    cron runs no-op instead of sending a second email (or spending a second
+    round of Anthropic tokens) when an earlier run already delivered today."""
+    url = f"{SUPABASE_URL}/rest/v1/briefs?select=brief_date&brief_date=eq.{iso_date}&limit=1"
+    req = urllib.request.Request(url, headers={
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return len(json.loads(resp.read())) > 0
+    except Exception as e:
+        # Fail open: if the check errors, proceed rather than silently skip a day.
+        print(f"Warning: dedup check failed ({e}); proceeding.", file=sys.stderr)
+        return False
 
 
 def get_recent_summaries(n: int = 10) -> str | None:
@@ -1252,15 +1271,34 @@ def send_email(html: str, date_str: str, to: str, smtp_conn=None):
 
 def main():
     test_mode = "--test" in sys.argv
-    today = datetime.now()
-    date_str = today.strftime("%B %d, %Y")
-    print(f"=== The Briefly Morning Brief | {date_str} ===")
+    # Anchor every date/time decision to Eastern (market) time, not the runner's
+    # UTC clock. zoneinfo handles EDT/EST automatically, so 7am ET stays 7am ET
+    # across daylight-saving changes without touching the cron.
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    today_et = now_et.date()
+    date_str = now_et.strftime("%B %d, %Y")
+    print(f"=== The Briefly Morning Brief | {date_str} ({now_et:%H:%M} ET) ===")
     if test_mode:
         print("*** TEST MODE — sending only to connor.florczyk@brieflywealth.com ***")
     print()
 
-    if not test_mode and is_us_market_holiday(today.date()):
+    if not test_mode and is_us_market_holiday(today_et):
         print("US markets are closed today. No brief to send.")
+        return
+
+    # GitHub's scheduler fires late and sometimes drops runs, so several cron
+    # entries cover the 7-9am ET window. This gate keeps any of them from
+    # sending before 7am ET (pre-market data isn't ready) or as a stale midday
+    # send if everything upstream was badly delayed.
+    if not test_mode and not (7 <= now_et.hour < 12):
+        print(f"Outside the 7am-noon ET send window (currently {now_et.hour}:00 ET). No brief to send.")
+        return
+
+    # If an earlier run already delivered today's brief, a backup cron must
+    # no-op — before any Anthropic tokens are spent.
+    iso_today = today_et.isoformat()
+    if not test_mode and brief_already_sent(iso_today):
+        print(f"Brief for {iso_today} already sent. Nothing to do.")
         return
 
     if test_mode:
