@@ -786,7 +786,7 @@ def build_market_card(data: dict, bottom_line: str) -> str:
         )
 
     card_bg = "background:#e6e3d6;border:1px solid #bebcb3;padding:16px 16px 12px;margin-bottom:20px;"
-    card_lbl = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#5c5c5a;margin:0 0 12px;'
+    card_lbl = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#2f8cff;margin:0 0 12px;'
 
     html = f'''<div style="{card_bg}">
 <p style="{card_lbl}">Markets</p>
@@ -983,7 +983,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 
     unsub = ""
     if unsub_url:
-        unsub = f' &middot; <a href="{unsub_url}" style="color:#5c5c5a;text-decoration:underline;">Unsubscribe</a>'
+        unsub = f' &middot; <a href="{unsub_url}" style="color:#0b5394;text-decoration:underline;">Unsubscribe</a>'
     try:
         d = datetime.strptime(date_str, "%B %d, %Y")
         newspaper_date = f"{d.strftime('%A')}, {date_str}"
@@ -1010,7 +1010,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 
 <!-- Header -->
 <tr><td style="background:#f1eee2;padding:32px 28px 0;text-align:center;">
-  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
+  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#2f8cff;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:2px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
   <h1 class="brief-title" style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:34px;font-weight:900;color:#1c1d1f;margin:14px 0 12px;letter-spacing:-0.025em;line-height:1.05;">The Morning Brief</h1>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
@@ -1029,7 +1029,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 <!-- Subscribe CTA -->
 <tr><td style="padding:28px 24px;border-top:1px solid #bebcb3;background:#f1eee2;text-align:center;">
   <p style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1c1d1f;font-weight:700;margin:0 0 14px;">Know an advisor who'd find this useful?</p>
-  <a href="{SUBSCRIBE_URL}" style="display:inline-block;font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:11.5px;font-weight:800;color:#f1eee2;background:#1c1d1f;padding:13px 22px;text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;">Subscribe to the Morning Brief</a>
+  <a href="{SUBSCRIBE_URL}" style="display:inline-block;font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:11.5px;font-weight:800;color:#ffffff;background:#2f8cff;padding:13px 22px;text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;">Subscribe to the Morning Brief</a>
 </td></tr>
 
 <!-- Footer -->
