@@ -785,8 +785,8 @@ def build_market_card(data: dict, bottom_line: str) -> str:
             f'</tr>'
         )
 
-    card_bg = "background:#e6e3d6;border:1px solid #bebcb3;padding:16px 16px 12px;margin-bottom:20px;"
-    card_lbl = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#2f8cff;margin:0 0 12px;'
+    card_bg = "background:#e6e3d6;padding:28px 24px;border-bottom:1px solid #bebcb3;margin:0 -24px 0 -24px;"
+    card_lbl = f'{MONO}font-size:10.5px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#2f8cff;margin:0 0 14px;'
 
     html = f'''<div style="{card_bg}">
 <p style="{card_lbl}">Markets</p>
@@ -810,7 +810,7 @@ def build_market_card(data: dict, bottom_line: str) -> str:
     if bottom_line:
         html += (
             f'<p style="{SANS}font-size:14.5px;line-height:1.65;color:#2d2e2f;'
-            f'margin:0 0 0;padding:0 0 22px;border-bottom:1px solid #bebcb3;">'
+            f'margin:0;padding:24px 0 22px 0;border-bottom:1px solid #bebcb3;">'
             f'{bottom_line}</p>'
         )
 
@@ -901,8 +901,7 @@ S_ADVISOR = f"background:#e6e3d6;padding:28px 24px;border-bottom:1px solid #bebc
 S_WATERCOOLER = f"background:#e6e3d6;padding:28px 24px;margin:0 -24px;border-bottom:none;"
 S_SECTION = f"margin:0;padding:28px 0;border-bottom:1px solid #bebcb3;"
 S_SECTION_LAST = f"margin:0;padding:28px 0;border-bottom:none;"
-S_H2 = f"{MONO}font-size:10.5px;font-weight:800;color:#5c5c5a;margin:0 0 10px;letter-spacing:0.14em;text-transform:uppercase;"
-S_H2_ADVISOR = f"{MONO}font-size:10.5px;font-weight:800;color:#2f8cff;margin:0 0 10px;letter-spacing:0.14em;text-transform:uppercase;"
+S_H2 = f"{MONO}font-size:10.5px;font-weight:800;color:#2f8cff;margin:0 0 10px;letter-spacing:0.14em;text-transform:uppercase;"
 S_H3 = f"{SANS}font-size:20px;font-weight:900;color:#1c1d1f;margin:0 0 14px;letter-spacing:-0.02em;line-height:1.2;"
 S_P = f"{SANS}font-size:14.5px;line-height:1.65;color:#2d2e2f;margin:0 0 12px;"
 S_CLIENT_SCRIPT = f"background:#f1eee2;border:1px solid #bebcb3;padding:18px 20px;margin-top:16px;"
@@ -945,7 +944,7 @@ def inline_analysis_styles(html: str) -> str:
         html = html[:idx] + new + html[idx + len(old):]
     html = re.sub(r' class="[^"]*"', '', html)
 
-    advisor_h2 = f'<h2 style="{S_H2_ADVISOR}">Advisor Talking Point</h2>'
+    advisor_h2 = f'<h2 style="{S_H2}">Advisor Talking Point</h2>'
     if re.escape(S_ADVISOR) in re.escape(html) and "Advisor Talking Point" not in html:
         html = html.replace(
             f'<div style="{S_ADVISOR}">',
@@ -1010,7 +1009,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 
 <!-- Header -->
 <tr><td style="background:#f1eee2;padding:32px 28px 0;text-align:center;">
-  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#2f8cff;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
+  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:2px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
   <h1 class="brief-title" style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:34px;font-weight:900;color:#1c1d1f;margin:14px 0 12px;letter-spacing:-0.025em;line-height:1.05;">The Morning Brief</h1>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
