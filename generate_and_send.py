@@ -36,9 +36,7 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 UNSUBSCRIBE_BASE_URL = os.environ.get(
     "UNSUBSCRIBE_BASE_URL", "https://brieflywealth.com/unsubscribe.html"
 )
-SUBSCRIBE_URL = os.environ.get(
-    "SUBSCRIBE_URL", "https://brieflywealth.com/#newsletter"
-)
+SUBSCRIBE_URL = os.environ.get("SUBSCRIBE_URL") or "https://brieflywealth.com/subscribe.html"
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -749,11 +747,12 @@ def parse_watercooler_summary(raw: str) -> str:
 # ── Build Market Card ──────────────────────────────────────────
 
 def build_market_card(data: dict, bottom_line: str) -> str:
-    """Build the Layout D unified market table + bottom line."""
+    """Build the unified market table + bottom line, warm-paper themed."""
     if not data:
         return ""
 
-    F = "font-family:Georgia,'Times New Roman',serif;"
+    SANS = "font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;"
+    MONO = "font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;"
     blank = {"level": "\u2014", "ytd": "\u2014", "mtd": "\u2014"}
 
     def get(key):
@@ -761,24 +760,24 @@ def build_market_card(data: dict, bottom_line: str) -> str:
 
     def color(v):
         v = v.strip()
-        if v.startswith("+"): return "#1a7a3a"
-        elif v.startswith("-"): return "#b91c1c"
-        return "#6b8db5"
+        if v.startswith("+"): return "#1f8f5a"
+        elif v.startswith("-"): return "#c0392b"
+        return "#1c1d1f"
 
-    hdr_c = f'{F}font-size:11px;font-weight:bold;letter-spacing:0.8px;text-transform:uppercase;color:#6b8db5;padding:0 6px 6px;text-align:right;'
-    hdr_cl = f'{F}font-size:11px;font-weight:bold;letter-spacing:0.8px;text-transform:uppercase;color:#6b8db5;padding:0 6px 6px;text-align:left;'
-    idx_c = f'{F}font-size:14px;font-weight:bold;color:#142d4c;padding:7px 6px;'
-    num_c = f'{F}font-size:14px;padding:7px 6px;text-align:right;font-variant-numeric:tabular-nums;'
+    hdr_c = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#5c5c5a;padding:0 6px 8px;text-align:right;'
+    hdr_cl = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#5c5c5a;padding:0 6px 8px;text-align:left;'
+    idx_c = f'{SANS}font-size:13px;font-weight:700;color:#1c1d1f;padding:7px 6px;'
+    num_c = f'{MONO}font-size:12.5px;padding:7px 6px;text-align:right;font-variant-numeric:tabular-nums;'
 
     def nr(val):
         return f'<td style="{num_c}color:{color(val)};">{val}</td>'
 
     def lv(val):
-        return f'<td style="{num_c}color:#142d4c;">{val}</td>'
+        return f'<td style="{num_c}color:#1c1d1f;">{val}</td>'
 
     def row(name, key, last=False):
         d = get(key)
-        sep = "" if last else "border-bottom:1px solid #e4e9f0;"
+        sep = "" if last else "border-bottom:1px solid #bebcb3;"
         return (
             f'<tr style="{sep}">'
             f'<td style="{idx_c}">{name}</td>'
@@ -786,8 +785,8 @@ def build_market_card(data: dict, bottom_line: str) -> str:
             f'</tr>'
         )
 
-    card_bg = "background:#f6f8fb;border-radius:4px;padding:16px 16px 12px;margin-bottom:16px;"
-    card_lbl = f'{F}font-size:10px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#6b8db5;margin:0 0 10px;'
+    card_bg = "background:#e6e3d6;border:1px solid #bebcb3;padding:16px 16px 12px;margin-bottom:20px;"
+    card_lbl = f'{MONO}font-size:10px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#5c5c5a;margin:0 0 12px;'
 
     html = f'''<div style="{card_bg}">
 <p style="{card_lbl}">Markets</p>
@@ -810,8 +809,8 @@ def build_market_card(data: dict, bottom_line: str) -> str:
 
     if bottom_line:
         html += (
-            f'<p style="{F}font-size:16px;line-height:1.7;color:#2c3e50;'
-            f'margin:0 0 0;padding:0 0 20px;border-bottom:1px solid #dce3eb;">'
+            f'<p style="{SANS}font-size:14.5px;line-height:1.65;color:#2d2e2f;'
+            f'margin:0 0 0;padding:0 0 22px;border-bottom:1px solid #bebcb3;">'
             f'{bottom_line}</p>'
         )
 
@@ -891,23 +890,28 @@ def sanitize_brief_html(raw: str) -> str:
     return "".join(parser.out)
 
 
-# ── Inline Styles for Email ────────────────────────────────────
+# ── Inline Styles for Email (warm-paper, matches brieflywealth.com) ────
 
-FONT = "font-family:Georgia,'Times New Roman',serif;"
-S_ADVISOR = f"background:#f4f7fa;padding:28px 24px;border-left:4px solid #142d4c;border-bottom:1px solid #dce3eb;margin:0 -24px;margin-bottom:0;"
-S_WATERCOOLER = f"background:#f8f9fb;padding:28px 24px;margin:0 -24px;border-bottom:none;"
-S_SECTION = f"margin:0;padding:28px 0;border-bottom:1px solid #dce3eb;"
+SANS = "font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;"
+MONO = "font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;"
+# Legacy alias kept so any external reference still resolves to the new sans stack.
+FONT = SANS
+
+S_ADVISOR = f"background:#e6e3d6;padding:28px 24px;border-bottom:1px solid #bebcb3;margin:0 -24px;margin-bottom:0;"
+S_WATERCOOLER = f"background:#e6e3d6;padding:28px 24px;margin:0 -24px;border-bottom:none;"
+S_SECTION = f"margin:0;padding:28px 0;border-bottom:1px solid #bebcb3;"
 S_SECTION_LAST = f"margin:0;padding:28px 0;border-bottom:none;"
-S_H2 = f"{FONT}font-size:11px;font-weight:bold;color:#6b8db5;margin:0 0 8px;letter-spacing:2.5px;text-transform:uppercase;"
-S_H3 = f"{FONT}font-size:20px;font-weight:normal;color:#142d4c;margin:0 0 14px;letter-spacing:-0.3px;line-height:1.3;"
-S_P = f"{FONT}font-size:16px;line-height:1.65;color:#2c3e50;margin:0 0 12px;"
-S_CLIENT_SCRIPT = f"background:#ffffff;border:1px solid #dce3eb;border-radius:4px;padding:18px 20px;margin-top:16px;"
-S_CLIENT_LABEL = f"{FONT}font-size:11px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#142d4c;margin:0 0 8px;"
-S_CLIENT_P = f"{FONT}font-size:15px;line-height:1.65;color:#3a4a5c;margin:0 0 8px;"
+S_H2 = f"{MONO}font-size:10.5px;font-weight:800;color:#5c5c5a;margin:0 0 10px;letter-spacing:0.14em;text-transform:uppercase;"
+S_H2_ADVISOR = f"{MONO}font-size:10.5px;font-weight:800;color:#2f8cff;margin:0 0 10px;letter-spacing:0.14em;text-transform:uppercase;"
+S_H3 = f"{SANS}font-size:20px;font-weight:900;color:#1c1d1f;margin:0 0 14px;letter-spacing:-0.02em;line-height:1.2;"
+S_P = f"{SANS}font-size:14.5px;line-height:1.65;color:#2d2e2f;margin:0 0 12px;"
+S_CLIENT_SCRIPT = f"background:#f1eee2;border:1px solid #bebcb3;padding:18px 20px;margin-top:16px;"
+S_CLIENT_LABEL = f"{MONO}font-size:10px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#1c1d1f;margin:0 0 8px;"
+S_CLIENT_P = f"{SANS}font-size:14px;line-height:1.6;color:#2d2e2f;margin:0 0 8px;"
 S_WATCH_TABLE = f"width:100%;border-collapse:collapse;margin:4px 0 0;"
-S_WATCH_GROUP_TD = f"{FONT}font-size:12px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#6b8db5;padding:14px 0 6px;"
-S_WATCH_TIME = f"{FONT}font-size:14px;color:#142d4c;font-weight:bold;width:80px;white-space:nowrap;padding:6px 12px 6px 0;vertical-align:top;"
-S_WATCH_DESC = f"{FONT}font-size:15px;color:#2c3e50;line-height:1.5;padding:6px 0;vertical-align:top;"
+S_WATCH_GROUP_TD = f"{MONO}font-size:10.5px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#5c5c5a;padding:16px 0 6px;"
+S_WATCH_TIME = f"{MONO}font-size:12px;color:#1c1d1f;font-weight:700;width:110px;white-space:nowrap;padding:6px 12px 6px 0;vertical-align:top;font-variant-numeric:tabular-nums;"
+S_WATCH_DESC = f"{SANS}font-size:14px;color:#2d2e2f;line-height:1.5;padding:6px 0;vertical-align:top;"
 
 
 def inline_analysis_styles(html: str) -> str:
@@ -941,7 +945,7 @@ def inline_analysis_styles(html: str) -> str:
         html = html[:idx] + new + html[idx + len(old):]
     html = re.sub(r' class="[^"]*"', '', html)
 
-    advisor_h2 = f'<h2 style="{S_H2}">Advisor Talking Point</h2>'
+    advisor_h2 = f'<h2 style="{S_H2_ADVISOR}">Advisor Talking Point</h2>'
     if re.escape(S_ADVISOR) in re.escape(html) and "Advisor Talking Point" not in html:
         html = html.replace(
             f'<div style="{S_ADVISOR}">',
@@ -966,27 +970,20 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
     # Subscriber name comes from the public signup form, so escape it before it
     # lands in the email HTML.
     first_name = html.escape(name.split()[0]) if name else ""
+    greet_style = (
+        "font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;"
+        "font-size:15px;color:#2d2e2f;margin:0 0 22px 0;line-height:1.6;"
+    )
     if first_name and greeting_hook:
-        greeting = (
-            f'<p style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;'
-            f'color:#2c3e50;margin:0 0 20px 0;line-height:1.65;">'
-            f'Good morning, {first_name}. {greeting_hook}</p>'
-        )
+        greeting = f'<p style="{greet_style}">Good morning, {first_name}. {greeting_hook}</p>'
     elif first_name:
-        greeting = (
-            f'<p style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;'
-            f'color:#2c3e50;margin:0 0 20px 0;">Good morning, {first_name}.</p>'
-        )
+        greeting = f'<p style="{greet_style}">Good morning, {first_name}.</p>'
     elif greeting_hook:
-        greeting = (
-            f'<p style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;'
-            f'color:#2c3e50;margin:0 0 20px 0;line-height:1.65;">'
-            f'Good morning. {greeting_hook}</p>'
-        )
+        greeting = f'<p style="{greet_style}">Good morning. {greeting_hook}</p>'
 
     unsub = ""
     if unsub_url:
-        unsub = f' &bull; <a href="{unsub_url}" style="color:#6b8db5;text-decoration:none;">Unsubscribe</a>'
+        unsub = f' &middot; <a href="{unsub_url}" style="color:#5c5c5a;text-decoration:underline;">Unsubscribe</a>'
     try:
         d = datetime.strptime(date_str, "%B %d, %Y")
         newspaper_date = f"{d.strftime('%A')}, {date_str}"
@@ -1000,44 +997,45 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 <style>
   @media screen and (max-width: 680px) {{
     .outer-table {{ padding: 0 !important; }}
-    .inner-table {{ width: 100% !important; border-radius: 0 !important; }}
+    .inner-table {{ width: 100% !important; }}
+    .brief-title {{ font-size: 28px !important; }}
   }}
 </style>
 </head>
-<body style="margin:0;padding:0;background:#e8eef4;font-family:Georgia,'Times New Roman',serif;">
-<table width="100%" cellpadding="0" cellspacing="0" class="outer-table" style="background:#e8eef4;padding:32px 16px;">
+<body style="margin:0;padding:0;background:#d9d7cb;font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" class="outer-table" style="background:#d9d7cb;padding:32px 16px;">
 <tr><td align="center">
 <!--[if mso]><table width="640" cellpadding="0" cellspacing="0"><tr><td><![endif]-->
-<table cellpadding="0" cellspacing="0" class="inner-table" style="background:#ffffff;border-radius:4px;overflow:hidden;width:100%;max-width:640px;">
+<table cellpadding="0" cellspacing="0" class="inner-table" style="background:#f1eee2;border:1px solid #1c1d1f;width:100%;max-width:640px;">
 
 <!-- Header -->
-<tr><td style="background:#ffffff;padding:28px 24px 0;text-align:center;">
-  <p style="font-family:Georgia,'Times New Roman',serif;font-size:11px;color:#6b8db5;margin:0 0 14px;letter-spacing:3px;text-transform:uppercase;">Briefly Wealth</p>
-  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:2px solid #142d4c;height:0;font-size:0;line-height:0;"></td></tr></table>
-  <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:normal;color:#142d4c;margin:14px 0 12px;letter-spacing:-0.5px;line-height:1.1;">The Morning Brief</h1>
-  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #142d4c;height:0;font-size:0;line-height:0;"></td></tr></table>
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;"><tr>
-    <td style="text-align:left;"><p style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#4a5d72;margin:0;">{newspaper_date}</p></td>
-    <td style="text-align:right;"><p style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#4a5d72;margin:0;">Pre-Market Edition</p></td>
+<tr><td style="background:#f1eee2;padding:32px 28px 0;text-align:center;">
+  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:2px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
+  <h1 class="brief-title" style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:34px;font-weight:900;color:#1c1d1f;margin:14px 0 12px;letter-spacing:-0.025em;line-height:1.05;">The Morning Brief</h1>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;"><tr>
+    <td style="text-align:left;"><p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">{newspaper_date}</p></td>
+    <td style="text-align:right;"><p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">Pre-Market Edition</p></td>
   </tr></table>
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;"><tr><td style="border-top:1px solid #d0dae4;height:0;font-size:0;line-height:0;"></td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;"><tr><td style="border-top:1px solid #bebcb3;height:0;font-size:0;line-height:0;"></td></tr></table>
 </td></tr>
 
 <!-- Body -->
-<tr><td style="padding:24px 24px 0;">
+<tr><td style="padding:24px 24px 0;background:#f1eee2;">
   {greeting}{market_card}{styled_analysis}
 </td></tr>
 
 <!-- Subscribe CTA -->
-<tr><td style="padding:24px 24px;border-top:1px solid #d4dee8;background:#f4f7fa;text-align:center;">
-  <p style="font-family:Georgia,'Times New Roman',serif;font-size:15px;color:#2c3e50;margin:0 0 14px;">Know an advisor who'd find this useful?</p>
-  <a href="{SUBSCRIBE_URL}" style="display:inline-block;font-family:Georgia,'Times New Roman',serif;font-size:15px;color:#ffffff;background:#142d4c;padding:12px 28px;border-radius:4px;text-decoration:none;letter-spacing:0.3px;">Subscribe to The Morning Brief</a>
+<tr><td style="padding:28px 24px;border-top:1px solid #bebcb3;background:#f1eee2;text-align:center;">
+  <p style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1c1d1f;font-weight:700;margin:0 0 14px;">Know an advisor who'd find this useful?</p>
+  <a href="{SUBSCRIBE_URL}" style="display:inline-block;font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:11.5px;font-weight:800;color:#f1eee2;background:#1c1d1f;padding:13px 22px;text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;">Subscribe to the Morning Brief</a>
 </td></tr>
 
 <!-- Footer -->
-<tr><td style="padding:16px 24px 20px;border-top:1px solid #e4ecf4;background:#f4f7fa;">
-  <p style="font-family:Georgia,'Times New Roman',serif;font-size:11px;color:#8aacc8;line-height:1.6;margin:0;text-align:center;">
-    <i>AI-generated using live market data. Always verify independently. Not investment advice.</i><br>
+<tr><td style="padding:18px 24px 22px;border-top:1px solid #bebcb3;background:#e6e3d6;">
+  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10px;color:#5c5c5a;line-height:1.7;margin:0;text-align:center;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">
+    <i style="font-style:italic;">AI-generated using live market data. Always verify independently. Not investment advice.</i><br>
     Sent by Briefly Wealth{unsub}
   </p>
 </td></tr>
