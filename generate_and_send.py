@@ -1009,7 +1009,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 
 <!-- Header -->
 <tr><td style="background:#f1eee2;padding:32px 28px 0;text-align:center;">
-  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#5c5c5a;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
+  <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10.5px;color:#2f8cff;margin:0 0 14px;letter-spacing:0.22em;text-transform:uppercase;font-weight:800;">Briefly Wealth</p>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:2px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
   <h1 class="brief-title" style="font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:34px;font-weight:900;color:#1c1d1f;margin:14px 0 12px;letter-spacing:-0.025em;line-height:1.05;">The Morning Brief</h1>
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1c1d1f;height:0;font-size:0;line-height:0;"></td></tr></table>
