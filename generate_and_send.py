@@ -69,6 +69,22 @@ def is_us_market_holiday(dt_date) -> bool:
 
 # ── Supabase ───────────────────────────────────────────────────
 
+def ping_supabase() -> None:
+    """Cheap REST GET so the project counts as active even if the rest of the run bails.
+    Free-tier inactivity pause is based on API gateway requests; ensure one lands first."""
+    url = f"{SUPABASE_URL}/rest/v1/briefs?select=id&limit=1"
+    req = urllib.request.Request(url, headers={
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        print("Supabase ping ok")
+    except Exception as e:
+        print(f"Supabase ping failed: {e}", file=sys.stderr)
+
+
 def get_subscribers() -> list[dict]:
     url = f"{SUPABASE_URL}/rest/v1/subscribers?status=eq.active&select=email,name,firm,unsubscribe_token"
     req = urllib.request.Request(url, headers={
@@ -1363,6 +1379,8 @@ def main():
     if test_mode:
         print("*** TEST MODE — sending only to connor.florczyk@brieflywealth.com ***")
     print()
+
+    ping_supabase()
 
     if not test_mode and is_us_market_holiday(today_et):
         print("US markets are closed today. No brief to send.")
