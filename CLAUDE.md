@@ -2,7 +2,7 @@
 
 ## Overview
 
-Automated daily pre-market morning briefing for financial advisors. Generates AI-powered market analysis and emails it to subscribers at 7am EST on weekdays.
+Automated daily pre-market morning briefing for financial advisors. Generates AI-powered market analysis and emails it to subscribers at 6:00 AM ET on weekdays. Trigger fires at 5:30 AM ET (external cron-job.org -> GH workflow_dispatch); script generates the brief, then sleeps until 6:00 AM ET sharp before sending so delivery time is consistent.
 
 ## Stack
 
@@ -11,7 +11,7 @@ Automated daily pre-market morning briefing for financial advisors. Generates AI
 - **Data Sources**: Yahoo Finance (yfinance), FRED API (economic calendar), earnings calendar (77 large-cap stocks)
 - **Email**: Gmail SMTP (SSL)
 - **Database**: Supabase PostgreSQL (subscribers + briefs tables)
-- **CI/CD**: GitHub Actions — scheduled weekdays 10:00 UTC (7am EST), manual trigger with test mode
+- **CI/CD**: GitHub Actions; primary trigger is external (cron-job.org POSTs workflow_dispatch at 5:30 AM ET weekdays). GH `schedule:` is backup only (it drifts 5+ hours and silently drops runs on low-activity repos).
 
 ## Architecture
 

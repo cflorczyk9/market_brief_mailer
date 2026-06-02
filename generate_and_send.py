@@ -1386,12 +1386,15 @@ def main():
         print("US markets are closed today. No brief to send.")
         return
 
-    # GitHub's scheduler fires late and sometimes drops runs, so several cron
-    # entries cover the 7-9am ET window. This gate keeps any of them from
-    # sending before 7am ET (pre-market data isn't ready) or as a stale midday
-    # send if everything upstream was badly delayed.
-    if not test_mode and not (7 <= now_et.hour < 12):
-        print(f"Outside the 7am-noon ET send window (currently {now_et.hour}:00 ET). No brief to send.")
+    # Target delivery: 6:00 AM ET. The external cron-job.org trigger fires at
+    # 5:30 AM ET (workflow_dispatch is honored immediately, unlike GH schedule:).
+    # We generate first, then sleep until 6:00 AM ET so delivery time is
+    # consistent regardless of when the run actually starts. Bail only if it's
+    # already past noon ET — at that point the brief is too stale to be useful
+    # pre-market context.
+    target_send_et = now_et.replace(hour=6, minute=0, second=0, microsecond=0)
+    if not test_mode and now_et.hour >= 12:
+        print(f"Past noon ET ({now_et:%H:%M} ET). Too late for a pre-market brief; skipping.")
         return
 
     # If an earlier run already delivered today's brief, a backup cron must
@@ -1457,6 +1460,16 @@ def main():
     print(f"Greeting hook: {len(greeting_hook)} chars")
     print(f"Analysis: {len(analysis)} chars")
     print(f"Summary: {len(summary_json)} chars\n")
+
+    # Hold the send until 6:00 AM ET so subscribers see a consistent delivery
+    # time even though the run may have started at 5:30 AM ET (external trigger)
+    # or later (GH backup cron). Generation has already used the 5:30-6:00 window.
+    if not test_mode:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        if now_et < target_send_et:
+            wait_seconds = (target_send_et - now_et).total_seconds()
+            print(f"\nHolding until 6:00 AM ET to send ({wait_seconds:.0f}s)...")
+            time.sleep(wait_seconds)
 
     print("Sending...")
     ok, fail = 0, 0

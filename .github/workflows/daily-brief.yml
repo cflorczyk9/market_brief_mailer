@@ -2,18 +2,15 @@ name: Daily Market Brief
 
 on:
   schedule:
-    # Target: 7:00am ET every weekday the US market is open.
-    # GitHub cron is fixed UTC and can't follow DST, and scheduled runs are
-    # routinely delayed 30min-3h (or dropped). So we fire several times across
-    # the 7-9am ET window covering BOTH EDT (UTC-4) and EST (UTC-5). The script
-    # gates on real ET time (never sends before 7am ET) and uses a Supabase
-    # dedup guard so only the first run that lands in the window actually sends.
-    - cron: "0 11 * * 1-5"   # 7:00am EDT (summer) primary
-    - cron: "20 11 * * 1-5"  # EDT backup
-    - cron: "50 11 * * 1-5"  # EDT backup
-    - cron: "0 12 * * 1-5"   # 7:00am EST (winter) primary / 8:00am EDT backup
-    - cron: "30 12 * * 1-5"  # backup
-    - cron: "0 13 * * 1-5"   # last-resort catch-up
+    # PRIMARY trigger is external (cron-job.org) calling workflow_dispatch at
+    # 5:30 AM ET weekdays. GitHub Actions schedule: is unreliable (5-7 hour
+    # drift, sometimes dropped entirely on low-activity repos), so it is used
+    # only as a backup if the external service is down. The script holds the
+    # send until 6:00 AM ET no matter when it starts; Supabase dedup ensures
+    # only one run actually sends.
+    - cron: "30 9 * * 1-5"   # 5:30 AM EDT backup
+    - cron: "30 10 * * 1-5"  # 5:30 AM EST / 6:30 AM EDT backup
+    - cron: "30 11 * * 1-5"  # 6:30 AM EST / 7:30 AM EDT last-resort
   workflow_dispatch:
     inputs:
       test_mode:
