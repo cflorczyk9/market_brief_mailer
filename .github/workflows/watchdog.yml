@@ -1,0 +1,41 @@
+name: Brief Watchdog
+
+# Verifies the daily brief actually sent. Fires AFTER the last daily-brief
+# backup window (7:30 ET) so a slow real send isn't false-flagged. Triggered
+# two ways: GH schedule (unreliable, kept as backup) + external cron-job.org
+# job at 7:30 ET (primary, set up manually in cron-job.org dashboard).
+#
+# If the brief did not send, the watchdog emails Connor and dispatches the
+# main workflow one more time. The main script's noon-ET bail still gates
+# whether the late attempt actually delivers.
+
+on:
+  schedule:
+    # 12:00 UTC = 8:00 EDT (summer) / 7:00 EST (winter). Either way, fires
+    # AFTER the last daily-brief backup at "30 11 UTC" (7:30 EDT / 6:30 EST).
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch: {}
+
+# actions: write lets the watchdog script POST workflow_dispatch back to
+# daily-brief.yml using the auto-injected GITHUB_TOKEN (no PAT required).
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run watchdog
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python watchdog.py
