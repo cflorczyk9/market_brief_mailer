@@ -2,15 +2,15 @@ name: Daily Market Brief
 
 on:
   schedule:
-    # PRIMARY trigger is external (cron-job.org) calling workflow_dispatch at
-    # 5:30 AM ET weekdays. GitHub Actions schedule: is unreliable (5-7 hour
+    # PRIMARY trigger is external (cron-job.org) calling workflow_dispatch shortly
+    # before 6:30 AM ET weekdays. GitHub Actions schedule: is unreliable (5-7 hour
     # drift, sometimes dropped entirely on low-activity repos), so it is used
     # only as a backup if the external service is down. The script holds the
-    # send until 6:00 AM ET no matter when it starts; Supabase dedup ensures
+    # send until 6:30 AM ET no matter when it starts; Supabase dedup ensures
     # only one run actually sends.
-    - cron: "30 9 * * 1-5"   # 5:30 AM EDT backup
-    - cron: "30 10 * * 1-5"  # 5:30 AM EST / 6:30 AM EDT backup
-    - cron: "30 11 * * 1-5"  # 6:30 AM EST / 7:30 AM EDT last-resort
+    - cron: "30 10 * * 1-5"  # 6:30 AM EDT backup
+    - cron: "30 11 * * 1-5"  # 6:30 AM EST / 7:30 AM EDT backup
+    - cron: "0 12 * * 1-5"   # 7:00 AM EST / 8:00 AM EDT last-resort
   workflow_dispatch:
     inputs:
       test_mode:
@@ -32,7 +32,9 @@ permissions:
 jobs:
   send-brief:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Generous enough that a run which starts before 6:30 ET can hold until the
+    # 6:30 send window without the runner being killed mid-sleep.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
