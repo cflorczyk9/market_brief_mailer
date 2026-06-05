@@ -27,7 +27,7 @@ import yfinance as yf
 
 # ── Config ─────────────────────────────────────────────────────
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -38,7 +38,7 @@ UNSUBSCRIBE_BASE_URL = os.environ.get(
 )
 SUBSCRIBE_URL = os.environ.get("SUBSCRIBE_URL") or "https://brieflywealth.com/subscribe.html"
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "google/gemini-2.5-flash"
 
 
 # ── US Market Holiday Check ────────────────────────────────────
@@ -619,23 +619,30 @@ No preamble. Start directly with the <div> tag."""
 
 def call_anthropic(model: str, system: str, user_msg: str,
                    max_tokens: int = 1024, use_search: bool = False) -> str:
-    """Call Anthropic API and return joined text blocks."""
+    """Call the LLM via OpenRouter and return the message text.
+
+    Named call_anthropic for historical reasons; it now routes through OpenRouter
+    so we can run Gemini 2.5 Flash (cheaper than Haiku, comparable quality). Web
+    search uses OpenRouter's web plugin in place of Anthropic's native tool."""
     payload = {
         "model": model,
         "max_tokens": max_tokens,
-        "system": system,
-        "messages": [{"role": "user", "content": user_msg}],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
     }
     if use_search:
-        payload["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+        payload["plugins"] = [{"id": "web", "max_results": 3}]
 
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        "https://openrouter.ai/api/v1/chat/completions",
         data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": "https://brieflywealth.com",
+            "X-Title": "Briefly Morning Brief",
         },
     )
     try:
@@ -645,16 +652,16 @@ def call_anthropic(model: str, system: str, user_msg: str,
         print(f"API error {e.code}: {e.read().decode('utf-8', errors='replace')}", file=sys.stderr)
         raise
 
-    text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-    if not text_blocks:
+    text = (data["choices"][0]["message"].get("content") or "").strip()
+    if not text:
         raise ValueError("API returned no text content")
 
     usage = data.get("usage", {})
-    in_tok = usage.get("input_tokens", 0)
-    out_tok = usage.get("output_tokens", 0)
+    in_tok = usage.get("prompt_tokens", 0)
+    out_tok = usage.get("completion_tokens", 0)
     print(f"  Tokens: {in_tok} in / {out_tok} out ({model})")
 
-    return "\n".join(text_blocks)
+    return text
 
 
 # ── Parse Helpers ─────────────────────────────────────────────
@@ -667,8 +674,19 @@ def _md_bold_to_html(text: str) -> str:
 
 
 def _strip_em_dashes(text: str) -> str:
-    """Replace em dashes with other punctuation. Connor has a hard rule
-    against em dashes in Briefly output, and Haiku emits them by default."""
+    """Normalize stray model punctuation/markdown before it lands in HTML.
+    Connor has a hard rule against em dashes. Non-Anthropic models (e.g. Gemini)
+    also leak markdown citation links and smart quotes that would otherwise
+    render as literal text in the email, so normalize those here too. This is the
+    universal cleaner: it runs on the greeting, bottom line, advisor section, and
+    Water Cooler (the last two via _strip_model_artifacts)."""
+    # Remove leaked markdown links (citations the model adds despite the no-link
+    # rule), e.g. " [bls.gov](https://...)" or " ([marketindex.com.au](https://...))".
+    text = re.sub(r'\s*\(?\[[^\]]+\]\(https?://[^)]*\)\)?', '', text)
+    # Normalize smart quotes and en dashes to plain ASCII.
+    text = (text.replace('‘', "'").replace('’', "'")
+                .replace('“', '"').replace('”', '"')
+                .replace('–', '-'))
     # " — " parenthetical use becomes ", "
     text = re.sub(r'\s+—\s+', ', ', text)
     # Any remaining em dash becomes a comma
