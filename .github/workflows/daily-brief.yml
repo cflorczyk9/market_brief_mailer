@@ -2,15 +2,23 @@ name: Daily Market Brief
 
 on:
   schedule:
-    # PRIMARY trigger is external (cron-job.org) calling workflow_dispatch shortly
-    # before 6:30 AM ET weekdays. GitHub Actions schedule: is unreliable (5-7 hour
-    # drift, sometimes dropped entirely on low-activity repos), so it is used
-    # only as a backup if the external service is down. The script holds the
-    # send until 6:30 AM ET no matter when it starts; Supabase dedup ensures
-    # only one run actually sends.
-    - cron: "30 10 * * 1-5"  # 6:30 AM EDT backup
-    - cron: "30 11 * * 1-5"  # 6:30 AM EST / 7:30 AM EDT backup
-    - cron: "0 12 * * 1-5"   # 7:00 AM EST / 8:00 AM EDT last-resort
+    # An external trigger (cron-job.org) calling workflow_dispatch is meant to
+    # deliver on-time at 6:30 AM ET. It depends on a GitHub PAT that can expire
+    # silently, so GitHub's own schedule is the reliable floor here, not a
+    # mere backup. GitHub drops scheduled runs most often at :00 and :30 (peak
+    # congestion) and on busy weekday mornings, so these windows are staggered
+    # across odd minutes and a wide span. The script holds the send until
+    # 6:30 AM ET no matter when a run starts, and Supabase dedup means every
+    # firing after the first is a harmless no-op. Window spans 09:37-13:37 UTC
+    # to cover ~5:30 AM ET (EDT and EST) through well before the noon-ET bail.
+    - cron: "37 9 * * 1-5"   # 05:37 EDT / 04:37 EST
+    - cron: "23 10 * * 1-5"  # 06:23 EDT / 05:23 EST
+    - cron: "47 10 * * 1-5"  # 06:47 EDT / 05:47 EST
+    - cron: "19 11 * * 1-5"  # 07:19 EDT / 06:19 EST
+    - cron: "43 11 * * 1-5"  # 07:43 EDT / 06:43 EST
+    - cron: "17 12 * * 1-5"  # 08:17 EDT / 07:17 EST
+    - cron: "53 12 * * 1-5"  # 08:53 EDT / 07:53 EST
+    - cron: "37 13 * * 1-5"  # 09:37 EDT / 08:37 EST last-resort
   workflow_dispatch:
     inputs:
       test_mode:

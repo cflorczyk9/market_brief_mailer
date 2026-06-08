@@ -1,19 +1,21 @@
 name: Brief Watchdog
 
 # Verifies the daily brief actually sent. Fires AFTER the last daily-brief
-# backup window (7:30 ET) so a slow real send isn't false-flagged. Triggered
-# two ways: GH schedule (unreliable, kept as backup) + external cron-job.org
-# job at 7:30 ET (primary, set up manually in cron-job.org dashboard).
+# window (09:37 UTC / 09:37 EDT) so a slow real send isn't false-flagged.
 #
 # If the brief did not send, the watchdog emails Connor and dispatches the
-# main workflow one more time. The main script's noon-ET bail still gates
-# whether the late attempt actually delivers.
+# main workflow one more time using the auto-injected GITHUB_TOKEN (NOT the
+# external PAT, so this still works even when the external trigger's credential
+# has expired). The main script's noon-ET bail still gates whether the late
+# attempt actually delivers, so both windows below sit before noon ET.
 
 on:
   schedule:
-    # 12:00 UTC = 8:00 EDT (summer) / 7:00 EST (winter). Either way, fires
-    # AFTER the last daily-brief backup at "30 11 UTC" (7:30 EDT / 6:30 EST).
-    - cron: "0 12 * * 1-5"
+    # Two staggered odd-minute windows after the last daily-brief window
+    # (13:37 UTC). Avoid :00/:30 (GitHub drops those hardest). Both land
+    # before noon ET in EDT and EST so a re-dispatch can still deliver.
+    - cron: "13 14 * * 1-5"  # 10:13 EDT / 09:13 EST
+    - cron: "47 14 * * 1-5"  # 10:47 EDT / 09:47 EST
   workflow_dispatch: {}
 
 # actions: write lets the watchdog script POST workflow_dispatch back to
