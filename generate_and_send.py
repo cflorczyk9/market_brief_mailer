@@ -1486,7 +1486,7 @@ def main():
         now_et = datetime.now(ZoneInfo("America/New_York"))
         if now_et < target_send_et:
             wait_seconds = (target_send_et - now_et).total_seconds()
-            print(f"\nHolding until 6:00 AM ET to send ({wait_seconds:.0f}s)...")
+            print(f"\nHolding until 6:30 AM ET to send ({wait_seconds:.0f}s)...")
             time.sleep(wait_seconds)
 
     print("Sending...")
