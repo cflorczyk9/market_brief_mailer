@@ -37,6 +37,9 @@ UNSUBSCRIBE_BASE_URL = os.environ.get(
     "UNSUBSCRIBE_BASE_URL", "https://brieflywealth.com/unsubscribe.html"
 )
 SUBSCRIBE_URL = os.environ.get("SUBSCRIBE_URL") or "https://brieflywealth.com/subscribe.html"
+# CAN-SPAM requires a physical postal address on commercial email. Set the
+# POSTAL_ADDRESS secret (street or PO box + city/state/zip on one line).
+POSTAL_ADDRESS = os.environ.get("POSTAL_ADDRESS", "")
 
 MODEL = "google/gemini-2.5-flash"
 # Used when the primary model returns an unusable main brief (6/10: Gemini
@@ -145,13 +148,19 @@ def get_recent_summaries(n: int = 10) -> str | None:
     return None
 
 
-def get_yesterday_brief() -> dict | None:
-    """Fetch yesterday's greeting hook and summary for narrative threading."""
+def get_yesterday_brief(before_iso: str | None = None) -> dict | None:
+    """Fetch the most recent prior brief for narrative threading. Excludes
+    today's row (a same-day rerun would otherwise thread off itself) and
+    rows with an empty greeting_hook (a failed run's husk row would
+    otherwise block threading entirely, as on 6/10)."""
     url = (
         f"{SUPABASE_URL}/rest/v1/briefs"
         f"?select=brief_date,greeting_hook,summary"
+        f"&greeting_hook=neq."
         f"&order=brief_date.desc&limit=1"
     )
+    if before_iso:
+        url += f"&brief_date=lt.{before_iso}"
     req = urllib.request.Request(url, headers={
         "apikey": SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -167,8 +176,12 @@ def get_yesterday_brief() -> dict | None:
     return None
 
 
-def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str):
-    """Save today's brief and summary to Supabase (upsert on brief_date)."""
+def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str) -> bool:
+    """Save today's brief and summary to Supabase (upsert on brief_date).
+
+    Returns False if all attempts fail. That matters: with no row archived,
+    every backup cron later in the morning would regenerate and re-send the
+    brief to all subscribers, so the caller must alert on failure."""
     try:
         d = datetime.strptime(brief_date, "%B %d, %Y")
         iso_date = d.strftime("%Y-%m-%d")
@@ -182,21 +195,27 @@ def save_brief(brief_date: str, greeting_hook: str, analysis: str, summary: str)
         "summary": summary,
     }).encode()
     url = f"{SUPABASE_URL}/rest/v1/briefs?on_conflict=brief_date"
-    req = urllib.request.Request(url, data=payload, method="POST", headers={
-        "apikey": SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    })
-    try:
-        with urllib.request.urlopen(req) as resp:
-            status = resp.getcode()
-            print(f"Brief saved for {iso_date} (HTTP {status})")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        print(f"Warning: Could not save brief (HTTP {e.code}): {body}", file=sys.stderr)
-    except Exception as e:
-        print(f"Warning: Could not save brief: {e}", file=sys.stderr)
+    for attempt in range(3):
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates",
+        })
+        try:
+            with urllib.request.urlopen(req) as resp:
+                status = resp.getcode()
+                print(f"Brief saved for {iso_date} (HTTP {status})")
+            return True
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            print(f"Warning: Could not save brief (HTTP {e.code}, attempt {attempt + 1}/3): {body}",
+                  file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Could not save brief (attempt {attempt + 1}/3): {e}", file=sys.stderr)
+        if attempt < 2:
+            time.sleep(5)
+    return False
 
 
 # ── Market Data (Yahoo Finance) ────────────────────────────────
@@ -771,7 +790,10 @@ def parse_html_section(raw: str) -> str:
             if s == '</div>' and '</td>' not in s:
                 in_html = False
         return _strip_model_artifacts('\n'.join(clean)).strip()
-    return _strip_model_artifacts(raw).strip()
+    # No section div at all means the model went off-format. Returning the
+    # raw response here would ship un-templated prose to subscribers, so
+    # return empty and let the caller treat it as a failed attempt.
+    return ""
 
 
 def parse_watercooler_summary(raw: str) -> str:
@@ -782,13 +804,57 @@ def parse_watercooler_summary(raw: str) -> str:
     return ""
 
 
+# Generic capitalized words that don't identify a story's subject. Everything
+# else capitalized is treated as a subject term for the overlap check.
+_WC_GENERIC_TERMS = {
+    "this", "that", "these", "those", "while", "after", "before", "following",
+    "despite", "amid", "with", "without", "from", "into", "over", "under",
+    "even", "also", "still", "just", "when", "where", "which", "what", "their",
+    "there", "here", "however", "meanwhile", "separately", "according",
+    "today", "tonight", "yesterday", "tomorrow", "morning", "overnight",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december",
+    "u.s", "american", "americans", "america", "united", "states", "federal",
+    "reserve", "treasury", "washington", "wall", "street", "congress",
+    "markets", "market", "stocks", "stock", "investors", "investor", "futures",
+    "traders", "trading", "economy", "economic", "economists", "inflation",
+    "rates", "yields", "yield", "report", "reports", "data", "prices", "price",
+    "growth", "shares", "percent", "good", "brief", "briefing", "news",
+    "story", "week", "month", "year", "years",
+}
+
+
+def _subject_terms(text: str) -> set[str]:
+    """Capitalized tokens that plausibly name a story's subject (companies,
+    people, places, named events). Used for the Water Cooler overlap gate."""
+    text = re.sub(r'<[^>]+>', ' ', text)
+    tokens = re.findall(r"[A-Z][A-Za-z0-9&.'-]+", text)
+    return {
+        t.strip(".,'-").lower()
+        for t in tokens
+        if len(t.strip(".,'-")) >= 4 and t.strip(".,'-").lower() not in _WC_GENERIC_TERMS
+    }
+
+
+def watercooler_overlap(main_text: str, wc_text: str) -> set[str]:
+    """Subject terms shared between the main brief and a Water Cooler draft.
+    Non-empty means the story violates the 'completely unrelated' rule
+    (6/10: main brief and Water Cooler were both Iran)."""
+    return _subject_terms(main_text) & _subject_terms(wc_text)
+
+
 # ── Build Market Card ──────────────────────────────────────────
 
-def build_market_card(data: dict, bottom_line: str) -> str:
-    """Build the unified market table + bottom line, warm-paper themed."""
-    if not data:
-        return ""
+# Below this many tickers the Markets table reads as broken (rows of em
+# dashes), so we drop the table and keep only the bottom line.
+MIN_TICKERS_FOR_TABLE = 5
 
+
+def build_market_card(data: dict, bottom_line: str) -> str:
+    """Build the unified market table + bottom line, warm-paper themed.
+    The bottom line renders even when market data is missing — a Yahoo
+    outage must not silently delete the day's market summary."""
     SANS = "font-family:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;"
     MONO = "font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;"
     blank = {"level": "\u2014", "ytd": "\u2014", "mtd": "\u2014"}
@@ -826,7 +892,8 @@ def build_market_card(data: dict, bottom_line: str) -> str:
     card_bg = "background:#e6e3d6;padding:28px 24px;border-bottom:1px solid #bebcb3;margin:0 -24px 0 -24px;"
     card_lbl = f'{MONO}font-size:10.5px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:#2f8cff;margin:0 0 14px;'
 
-    html = f'''<div style="{card_bg}">
+    if len(data) >= MIN_TICKERS_FOR_TABLE:
+        html = f'''<div style="{card_bg}">
 <p style="{card_lbl}">Markets</p>
 <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
 <tr>
@@ -844,6 +911,10 @@ def build_market_card(data: dict, bottom_line: str) -> str:
 {row("Bitcoin", "btc", last=True)}
 </table>
 </div>'''
+    else:
+        print(f"Warning: only {len(data)}/{len(TICKERS)} tickers fetched; "
+              f"omitting Markets table.", file=sys.stderr)
+        html = ""
 
     if bottom_line:
         html += (
@@ -1021,6 +1092,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
     unsub = ""
     if unsub_url:
         unsub = f' &middot; <a href="{unsub_url}" style="color:#0b5394;text-decoration:underline;">Unsubscribe</a>'
+    postal = f" &middot; {html.escape(POSTAL_ADDRESS)}" if POSTAL_ADDRESS else ""
     try:
         d = datetime.strptime(date_str, "%B %d, %Y")
         newspaper_date = f"{d.strftime('%A')}, {date_str}"
@@ -1073,7 +1145,7 @@ def build_email_html(market_card: str, analysis: str, greeting_hook: str,
 <tr><td style="padding:18px 24px 22px;border-top:1px solid #bebcb3;background:#e6e3d6;">
   <p style="font-family:'JetBrains Mono',Menlo,Consolas,'Courier New',monospace;font-size:10px;color:#5c5c5a;line-height:1.7;margin:0;text-align:center;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">
     <i style="font-style:italic;">AI-generated using live market data. Always verify independently. Not investment advice.</i><br>
-    Sent by Briefly Wealth{unsub}
+    Sent by Briefly Wealth{postal}{unsub}
   </p>
 </td></tr>
 </table>
@@ -1338,6 +1410,12 @@ def generate_brief(date_str: str, market_data: dict,
     else:
         raise SystemExit("FATAL: main brief was empty/incomplete after all attempts. "
                          "Refusing to send.")
+    # The analysis sections pass through sanitize_brief_html in
+    # build_email_html, but the hook and bottom line are interpolated into
+    # the template directly — sanitize them here so web-search-fed model
+    # output can't smuggle links/scripts into the email.
+    greeting_hook = sanitize_brief_html(greeting_hook)
+    bottom_line = sanitize_brief_html(bottom_line)
     market_card = build_market_card(market_data, bottom_line)
 
     # ── CALL 2: Water Cooler (Haiku, web search) ──
@@ -1354,7 +1432,17 @@ def generate_brief(date_str: str, market_data: dict,
         except json.JSONDecodeError:
             pass
 
-    wc_msg = f"Today is {date_str}.\n\n{covered_topics}"
+    # Lead with what TO find, not the covered topics: the web-search plugin
+    # derives its query from this message, and a message dominated by the
+    # covered-topics list seeds the search toward the very subjects the
+    # story must avoid (how 6/10 got an Iran Water Cooler on an Iran day).
+    wc_msg = (
+        f"Today is {date_str}. Find one offbeat, US-focused story from the last "
+        f"day or two with no connection to markets, geopolitics, or macro news — "
+        f"think consumer brands, food, sports business, science, workplace "
+        f"culture, local oddities. Search for offbeat US business or consumer "
+        f"news; do NOT search for the excluded topics below.\n\n{covered_topics}"
+    )
     if recent_summaries:
         wc_topics = []
         for line in recent_summaries.split("\n"):
@@ -1370,22 +1458,44 @@ def generate_brief(date_str: str, market_data: dict,
                 wc_msg += f"- {t}\n"
             wc_msg += "If a story involves the same company, study, person, or subject as any item above, it counts as a repeat. Find something completely different."
 
-    # Water Cooler is optional content: retry once on the fallback model, but
-    # if it still fails, ship the brief without it rather than aborting a
-    # healthy main brief.
-    wc_raw, wc_html = "", ""
-    for wc_model in (MODEL, FALLBACK_MODEL):
+    # Water Cooler is optional content: retry on failure or on overlap with
+    # the main brief, but if no attempt yields a clean story, ship the brief
+    # without it rather than aborting a healthy main brief (or shipping a
+    # story that duplicates the day's market news).
+    main_text = f"{greeting_hook} {bottom_line}"
+    if summary_json:
         try:
-            wc_raw = call_anthropic(wc_model, SYSTEM_PROMPT_WATERCOOLER, wc_msg,
+            sj = json.loads(summary_json)
+            main_text += f" {sj.get('talking_point', '')} {sj.get('key_driver', '')}"
+        except json.JSONDecodeError:
+            pass
+
+    wc_raw, wc_html = "", ""
+    wc_attempt_msg = wc_msg
+    for wc_model in (MODEL, MODEL, FALLBACK_MODEL):
+        try:
+            wc_raw = call_anthropic(wc_model, SYSTEM_PROMPT_WATERCOOLER, wc_attempt_msg,
                                     max_tokens=512, use_search=True)
             wc_html = parse_html_section(wc_raw)
         except Exception as e:
             print(f"  Water Cooler call ({wc_model}) errored: {e}", file=sys.stderr)
             continue
-        if wc_html:
-            break
+        if not wc_html:
+            continue
+        overlap = watercooler_overlap(main_text, wc_html)
+        if overlap:
+            print(f"  Water Cooler overlaps main brief on: {', '.join(sorted(overlap))}; "
+                  f"regenerating.", file=sys.stderr)
+            wc_attempt_msg = wc_msg + (
+                f"\n\nYOUR PREVIOUS STORY WAS REJECTED: it overlapped today's market "
+                f"coverage on {', '.join(sorted(overlap))}. Pick a story with NO "
+                f"connection to those subjects."
+            )
+            wc_raw, wc_html = "", ""
+            continue
+        break
     if not wc_html:
-        print("  Water Cooler unavailable after retries; sending brief without it.",
+        print("  No usable Water Cooler after retries; sending brief without it.",
               file=sys.stderr)
 
     # Add water cooler summary to the summary JSON
@@ -1406,9 +1516,26 @@ def generate_brief(date_str: str, market_data: dict,
 
 # ── Send Email ─────────────────────────────────────────────────
 
-def send_email(html: str, date_str: str, to: str, smtp_conn=None):
+def send_alert(subject: str, body: str) -> None:
+    """Best-effort ops alert to the sender's own inbox. Never raises — the
+    alert must not take down the run it's reporting on."""
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = GMAIL_ADDRESS
+        msg["To"] = GMAIL_ADDRESS
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx) as s:
+            s.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            s.sendmail(GMAIL_ADDRESS, [GMAIL_ADDRESS], msg.as_string())
+        print(f"Alert sent: {subject}")
+    except Exception as e:
+        print(f"Warning: could not send alert email: {e}", file=sys.stderr)
+
+
+def send_email(html: str, date_str: str, to: str, smtp_conn=None, subject_suffix: str = ""):
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"The Briefly Morning Brief | {date_str}"
+    msg["Subject"] = f"The Briefly Morning Brief | {date_str}{subject_suffix}"
     msg["From"] = f"Briefly Wealth <{GMAIL_ADDRESS}>"
     msg["To"] = to
     msg["List-Unsubscribe"] = f"<mailto:{GMAIL_ADDRESS}?subject=Unsubscribe>"
@@ -1511,7 +1638,7 @@ def main():
         print("No previous summaries found (first run or empty table)\n")
 
     print("Fetching yesterday's brief for narrative threading...")
-    yesterday_brief = get_yesterday_brief()
+    yesterday_brief = get_yesterday_brief(iso_today)
     if not yesterday_brief:
         print("No previous brief found for threading\n")
 
@@ -1541,15 +1668,34 @@ def main():
             time.sleep(wait_seconds)
 
     print("Sending...")
+    # Forced resends reuse the day's subject, which Gmail threads under the
+    # earlier (bad) send \u2014 suffix it so recipients see a distinct message.
+    subject_suffix = " (Updated)" if force_mode else ""
     ok, fail = 0, 0
+    failed_recipients = []
     ctx = ssl.create_default_context()
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx) as smtp_conn:
-        smtp_conn.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+    smtp_conn = smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx)
+    smtp_conn.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+    try:
         for s in subs:
             try:
                 unsub = f"{UNSUBSCRIBE_BASE_URL}?token={s['unsubscribe_token']}"
                 html = build_email_html(market_card, analysis, greeting_hook, date_str, s["name"], unsub)
-                send_email(html, date_str, s["email"], smtp_conn=smtp_conn)
+                try:
+                    send_email(html, date_str, s["email"], smtp_conn=smtp_conn,
+                               subject_suffix=subject_suffix)
+                except Exception as e:
+                    # Gmail can drop a long-lived connection mid-loop; one
+                    # reconnect + retry before giving up on this recipient.
+                    print(f"  send to {s['email']} failed ({e}); reconnecting...", file=sys.stderr)
+                    try:
+                        smtp_conn.quit()
+                    except Exception:
+                        pass
+                    smtp_conn = smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx)
+                    smtp_conn.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                    send_email(html, date_str, s["email"], smtp_conn=smtp_conn,
+                               subject_suffix=subject_suffix)
                 label = s["name"] or s["email"]
                 print(f"  \u2713 {label} <{s['email']}>")
                 ok += 1
@@ -1557,15 +1703,38 @@ def main():
             except Exception as e:
                 print(f"  \u2717 {s['email']} \u2014 {e}", file=sys.stderr)
                 fail += 1
+                failed_recipients.append(s["email"])
+    finally:
+        try:
+            smtp_conn.quit()
+        except Exception:
+            pass
 
     # Never archive in test mode: the briefs row drives the dedup guard and the
     # anti-repetition history, so a test send must not block or pollute the real
     # send for that date.
+    saved = True
     if ok > 0 and not test_mode:
         print("\nSaving brief to archive...")
-        save_brief(date_str, greeting_hook, analysis, summary_json)
+        saved = save_brief(date_str, greeting_hook, analysis, summary_json)
+        if not saved:
+            send_alert(
+                f"Morning Brief {date_str}: ARCHIVE FAILED after send",
+                f"The brief was sent to {ok} subscriber(s) but could not be saved to "
+                f"Supabase after 3 attempts. Backup crons will see no row for today "
+                f"and WILL RE-SEND to everyone unless a row is inserted manually.",
+            )
 
     print(f"\nDone. Sent: {ok} | Failed: {fail}")
+
+    if failed_recipients:
+        send_alert(
+            f"Morning Brief {date_str}: {fail} recipient(s) failed",
+            "The brief was archived (so backup crons will not retry), but these "
+            "recipients did not get it:\n" + "\n".join(failed_recipients),
+        )
+    if failed_recipients or not saved:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

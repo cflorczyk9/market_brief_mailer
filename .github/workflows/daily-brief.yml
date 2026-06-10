@@ -45,8 +45,10 @@ jobs:
   send-brief:
     runs-on: ubuntu-latest
     # Generous enough that a run which starts before 6:30 ET can hold until the
-    # 6:30 send window without the runner being killed mid-sleep.
-    timeout-minutes: 75
+    # 6:30 send window without the runner being killed mid-sleep. The earliest
+    # cron (09:37 UTC) is 04:37 ET in winter (EST), a ~113-minute hold, so this
+    # must comfortably exceed that.
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,6 +65,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           UNSUBSCRIBE_BASE_URL: ${{ secrets.UNSUBSCRIBE_BASE_URL }}
           SUBSCRIBE_URL: ${{ secrets.SUBSCRIBE_URL }}
+          POSTAL_ADDRESS: ${{ secrets.POSTAL_ADDRESS }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           if [ "${{ github.event.inputs.force_resend }}" = "true" ]; then
