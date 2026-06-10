@@ -25,6 +25,10 @@ on:
         description: "Send only to Connor (test mode)"
         type: boolean
         default: true
+      force_resend:
+        description: "Resend to ALL subscribers even if today's brief already went out (bypasses dedup + noon bail)"
+        type: boolean
+        default: false
 
 # Serialize all runs of this workflow. GitHub batches delayed scheduled runs,
 # so two backup crons can otherwise fire seconds apart and both pass the
@@ -61,7 +65,9 @@ jobs:
           SUBSCRIBE_URL: ${{ secrets.SUBSCRIBE_URL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
-          if [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
+          if [ "${{ github.event.inputs.force_resend }}" = "true" ]; then
+            python generate_and_send.py --force
+          elif [ "${{ github.event.inputs.test_mode }}" = "true" ]; then
             python generate_and_send.py --test
           else
             python generate_and_send.py

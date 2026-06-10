@@ -1,6 +1,6 @@
 """
 Daily Market Brief — Generate & Send (v3)
-Per-section generation: Haiku for main + watch, Sonnet for Water Cooler.
+Per-section generation via OpenRouter (Gemini 2.5 Flash, Haiku fallback).
 10-day summary ledger prevents repetition across briefs.
 """
 
@@ -39,6 +39,10 @@ UNSUBSCRIBE_BASE_URL = os.environ.get(
 SUBSCRIBE_URL = os.environ.get("SUBSCRIBE_URL") or "https://brieflywealth.com/subscribe.html"
 
 MODEL = "google/gemini-2.5-flash"
+# Used when the primary model returns an unusable main brief (6/10: Gemini
+# returned 39 tokens and an empty brief went out to every subscriber). Haiku
+# was the production model before the Gemini switch.
+FALLBACK_MODEL = "anthropic/claude-haiku-4.5"
 
 
 # ── US Market Holiday Check ────────────────────────────────────
@@ -1309,9 +1313,31 @@ def generate_brief(date_str: str, market_data: dict,
     if anti_rep:
         main_msg += f"\n{anti_rep}"
 
-    main_raw = call_anthropic(MODEL, SYSTEM_PROMPT_MAIN, main_msg,
-                              max_tokens=2048, use_search=True)
-    greeting_hook, bottom_line, summary_json, sections_html = parse_main_response(main_raw)
+    # The model occasionally returns a near-empty response, and the parser
+    # returns empty strings rather than raising. Without this gate that husk
+    # goes straight to subscribers (it did on 6/10). Retry the primary model
+    # once, then fall back to Haiku; if no attempt yields a usable brief,
+    # abort the whole run — an empty brief must never reach the send step.
+    attempt_models = [MODEL, MODEL, FALLBACK_MODEL]
+    greeting_hook = bottom_line = summary_json = sections_html = ""
+    for attempt, attempt_model in enumerate(attempt_models, 1):
+        try:
+            main_raw = call_anthropic(attempt_model, SYSTEM_PROMPT_MAIN, main_msg,
+                                      max_tokens=2048, use_search=True)
+            greeting_hook, bottom_line, summary_json, sections_html = parse_main_response(main_raw)
+        except Exception as e:
+            print(f"  Main brief attempt {attempt}/{len(attempt_models)} ({attempt_model}) "
+                  f"errored: {e}", file=sys.stderr)
+            continue
+        if greeting_hook and bottom_line and sections_html:
+            break
+        print(f"  Main brief attempt {attempt}/{len(attempt_models)} ({attempt_model}) "
+              f"came back incomplete (hook={len(greeting_hook)} chars, "
+              f"bottom_line={len(bottom_line)} chars, sections={len(sections_html)} chars)",
+              file=sys.stderr)
+    else:
+        raise SystemExit("FATAL: main brief was empty/incomplete after all attempts. "
+                         "Refusing to send.")
     market_card = build_market_card(market_data, bottom_line)
 
     # ── CALL 2: Water Cooler (Haiku, web search) ──
@@ -1344,9 +1370,23 @@ def generate_brief(date_str: str, market_data: dict,
                 wc_msg += f"- {t}\n"
             wc_msg += "If a story involves the same company, study, person, or subject as any item above, it counts as a repeat. Find something completely different."
 
-    wc_raw = call_anthropic(MODEL, SYSTEM_PROMPT_WATERCOOLER, wc_msg,
-                            max_tokens=512, use_search=True)
-    wc_html = parse_html_section(wc_raw)
+    # Water Cooler is optional content: retry once on the fallback model, but
+    # if it still fails, ship the brief without it rather than aborting a
+    # healthy main brief.
+    wc_raw, wc_html = "", ""
+    for wc_model in (MODEL, FALLBACK_MODEL):
+        try:
+            wc_raw = call_anthropic(wc_model, SYSTEM_PROMPT_WATERCOOLER, wc_msg,
+                                    max_tokens=512, use_search=True)
+            wc_html = parse_html_section(wc_raw)
+        except Exception as e:
+            print(f"  Water Cooler call ({wc_model}) errored: {e}", file=sys.stderr)
+            continue
+        if wc_html:
+            break
+    if not wc_html:
+        print("  Water Cooler unavailable after retries; sending brief without it.",
+              file=sys.stderr)
 
     # Add water cooler summary to the summary JSON
     wc_summary = parse_watercooler_summary(wc_raw)
@@ -1387,6 +1427,10 @@ def send_email(html: str, date_str: str, to: str, smtp_conn=None):
 
 def main():
     test_mode = "--test" in sys.argv
+    # Manual resend: skip the already-sent dedup and the noon bail. Used when a
+    # bad brief went out and needs to be replaced same-day. Still sends to all
+    # subscribers and overwrites the day's archive row (upsert on brief_date).
+    force_mode = "--force" in sys.argv
     # Anchor every date/time decision to Eastern (market) time, not the runner's
     # UTC clock. zoneinfo handles EDT/EST automatically, so 7am ET stays 7am ET
     # across daylight-saving changes without touching the cron.
@@ -1396,6 +1440,8 @@ def main():
     print(f"=== The Briefly Morning Brief | {date_str} ({now_et:%H:%M} ET) ===")
     if test_mode:
         print("*** TEST MODE — sending only to connor.florczyk@brieflywealth.com ***")
+    if force_mode:
+        print("*** FORCE MODE — bypassing dedup and noon bail (manual resend) ***")
     print()
 
     ping_supabase()
@@ -1411,14 +1457,14 @@ def main():
     # already past noon ET — at that point the brief is too stale to be useful
     # pre-market context.
     target_send_et = now_et.replace(hour=6, minute=30, second=0, microsecond=0)
-    if not test_mode and now_et.hour >= 12:
+    if not test_mode and not force_mode and now_et.hour >= 12:
         print(f"Past noon ET ({now_et:%H:%M} ET). Too late for a pre-market brief; skipping.")
         return
 
     # If an earlier run already delivered today's brief, a backup cron must
     # no-op — before any Anthropic tokens are spent.
     iso_today = today_et.isoformat()
-    if not test_mode and brief_already_sent(iso_today):
+    if not test_mode and not force_mode and brief_already_sent(iso_today):
         print(f"Brief for {iso_today} already sent. Nothing to do.")
         return
 
@@ -1478,6 +1524,11 @@ def main():
     print(f"Greeting hook: {len(greeting_hook)} chars")
     print(f"Analysis: {len(analysis)} chars")
     print(f"Summary: {len(summary_json)} chars\n")
+
+    # Final guard, independent of whatever generate_brief did: never hand an
+    # empty brief to the send loop.
+    if not greeting_hook.strip() or not analysis.strip():
+        raise SystemExit("FATAL: brief body is empty at send time. Refusing to send.")
 
     # Hold the send until 6:30 AM ET so subscribers see a consistent delivery
     # time even though the run may have started earlier (external trigger) or
