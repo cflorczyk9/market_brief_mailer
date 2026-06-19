@@ -21,7 +21,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
@@ -29,6 +29,35 @@ ET = ZoneInfo("America/New_York")
 ALERT_TO = "connor.florczyk@brieflywealth.com"
 REPO = "cflorczyk9/market_brief_mailer"
 WORKFLOW_FILE = "daily-brief.yml"
+
+
+# Kept in sync with generate_and_send.py's is_us_market_holiday. Duplicated (not
+# imported) because that module reads API-key env vars and yfinance at import
+# time, neither of which the watchdog job provides. On a market holiday the send
+# script correctly writes no `briefs` row, so without this the watchdog would
+# false-alarm on every weekday holiday (Juneteenth, July 4, Thanksgiving, etc.).
+def is_us_market_holiday(dt_date) -> bool:
+    year, month, day = dt_date.year, dt_date.month, dt_date.day
+    weekday = dt_date.weekday()
+    if weekday >= 5:
+        return True
+    for h_m, h_d in [(1, 1), (6, 19), (7, 4), (12, 25)]:
+        if month == h_m:
+            hol = date(year, h_m, h_d)
+            hw = hol.weekday()
+            obs = date(year, h_m, h_d - 1) if hw == 5 else date(year, h_m, h_d + 1) if hw == 6 else hol
+            if dt_date == obs:
+                return True
+    if month == 1 and weekday == 0 and 15 <= day <= 21: return True
+    if month == 2 and weekday == 0 and 15 <= day <= 21: return True
+    a=year%19; b=year//100; c=year%100; d=b//4; e=b%4; f=(b+8)//25; g=(b-f+1)//3
+    h=(19*a+b-d-g+15)%30; i=c//4; k=c%4; l=(32+2*e+2*i-h-k)%7; m=(a+11*h+22*l)//451
+    em=(h+l-7*m+114)//31; ed=((h+l-7*m+114)%31)+1
+    if dt_date == date(year, em, ed) - timedelta(days=2): return True
+    if month == 5 and weekday == 0 and day >= 25: return True
+    if month == 9 and weekday == 0 and day <= 7: return True
+    if month == 11 and weekday == 3 and 22 <= day <= 28: return True
+    return False
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
@@ -92,6 +121,10 @@ def main() -> int:
     iso = today_iso()
     now_str = datetime.now(ET).strftime("%Y-%m-%d %H:%M %Z")
     print(f"Watchdog checking briefs for {iso} (now {now_str})")
+
+    if is_us_market_holiday(datetime.now(ET).date()):
+        print(f"OK — {iso} is a US market holiday; no brief expected. No alert.")
+        return 0
 
     try:
         if brief_exists(iso):
