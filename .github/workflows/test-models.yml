@@ -1,0 +1,45 @@
+name: Model Bake-off Test Sends
+
+# Manual only. Builds one brief per candidate model with LIVE market data and
+# emails each to Connor's address ONLY (recipient is hardcoded inside
+# send_test_emails.py; subscribers are never fetched). Never scheduled.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: test-models
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-sends:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install "yfinance==1.4.1"
+      - name: Build and send one test brief per model (to Connor only)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          UNSUBSCRIBE_BASE_URL: ${{ secrets.UNSUBSCRIBE_BASE_URL }}
+          SUBSCRIBE_URL: ${{ secrets.SUBSCRIBE_URL }}
+          POSTAL_ADDRESS: ${{ secrets.POSTAL_ADDRESS }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python send_test_emails.py
+      - name: Keep the rendered previews as a run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-previews
+          path: preview_*.html
+          if-no-files-found: ignore
